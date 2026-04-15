@@ -23,13 +23,14 @@ const FIRST_VISIT_KEY = '@ai_assistant_first_visit';
  * - 点击跳转 AI助手 Tab
  */
 export default function FloatingAIAssistant({ onPress }) {
-  const { width: screenW, height: screenH } = Dimensions.get('window');
+  const dims = useRef(Dimensions.get('window'));
 
   // 初始位置：右下角，距底部 tab 栏上方
-  const initialX = screenW - ICON_SIZE - 16;
-  const initialY = screenH - ICON_SIZE - 160;
+  const initialX = dims.current.width - ICON_SIZE - 16;
+  const initialY = dims.current.height - ICON_SIZE - 160;
 
-  const pan = useRef(new Animated.ValueXY({ x: initialX, y: initialY })).current;
+  const panX = useRef(new Animated.Value(initialX)).current;
+  const panY = useRef(new Animated.Value(initialY)).current;
   const lastOffset = useRef({ x: initialX, y: initialY });
 
   // 气泡
@@ -39,11 +40,15 @@ export default function FloatingAIAssistant({ onPress }) {
 
   // 拖拽标志
   const isDragging = useRef(false);
+  const bubbleRef = useRef(false); // 用 ref 避免 PanResponder 闭包陈旧问题
 
   // 呼吸动画
   const breathAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
+    const sub = Dimensions.addEventListener('change', ({ window }) => {
+      dims.current = window;
+    });
     // 呼吸动画循环
     const breathLoop = Animated.loop(
       Animated.sequence([
@@ -61,39 +66,32 @@ export default function FloatingAIAssistant({ onPress }) {
     );
     breathLoop.start();
 
-    // 首次登录检查
-    checkFirstVisit();
+    // 每次挂载（打开页面/刷新）都弹出欢迎气泡
+    const bubbleTimer = setTimeout(() => {
+      showWelcomeBubble();
+    }, 800);
 
-    return () => breathLoop.stop();
+    return () => { breathLoop.stop(); sub?.remove?.(); clearTimeout(bubbleTimer); };
   }, []);
 
-  const checkFirstVisit = async () => {
-    try {
-      const visited = await AsyncStorage.getItem(FIRST_VISIT_KEY);
-      if (!visited) {
-        // 首次登录，延迟一点后弹出气泡
-        setTimeout(() => {
-          setShowBubble(true);
-          Animated.parallel([
-            Animated.spring(bubbleOpacity, {
-              toValue: 1,
-              useNativeDriver: true,
-            }),
-            Animated.spring(bubbleScale, {
-              toValue: 1,
-              friction: 6,
-              useNativeDriver: true,
-            }),
-          ]).start();
-
-          // 5秒后自动隐藏
-          setTimeout(() => hideBubble(), 5000);
-        }, 800);
-        await AsyncStorage.setItem(FIRST_VISIT_KEY, 'true');
-      }
-    } catch (e) {
-      // ignore
-    }
+  const showWelcomeBubble = () => {
+    setShowBubble(true);
+    bubbleRef.current = true;
+    bubbleOpacity.setValue(0);
+    bubbleScale.setValue(0.6);
+    Animated.parallel([
+      Animated.spring(bubbleOpacity, {
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.spring(bubbleScale, {
+        toValue: 1,
+        friction: 6,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    // 5秒后自动隐藏
+    setTimeout(() => hideBubble(), 5000);
   };
 
   const hideBubble = () => {
@@ -101,57 +99,64 @@ export default function FloatingAIAssistant({ onPress }) {
       toValue: 0,
       duration: 300,
       useNativeDriver: true,
-    }).start(() => setShowBubble(false));
+    }).start(() => {
+      setShowBubble(false);
+      bubbleRef.current = false;
+    });
   };
 
-  // 限制边界
+  // 限制边界（仅在松手时调用）
   const clampPosition = (x, y) => {
-    const { width: w, height: h } = Dimensions.get('window');
-    const clampedX = Math.max(0, Math.min(x, w - ICON_SIZE));
-    const clampedY = Math.max(0, Math.min(y, h - ICON_SIZE - 80));
-    return { x: clampedX, y: clampedY };
+    const { width: w, height: h } = dims.current;
+    return {
+      x: Math.max(0, Math.min(x, w - ICON_SIZE)),
+      y: Math.max(0, Math.min(y, h - ICON_SIZE - 80)),
+    };
   };
 
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        // 移动超过 5px 才认为是拖拽
-        return Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5;
-      },
+      onMoveShouldSetPanResponder: (_, gs) =>
+        Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5,
       onPanResponderGrant: () => {
         isDragging.current = false;
-        // 隐藏气泡
-        if (showBubble) hideBubble();
+        if (bubbleRef.current) hideBubble();
       },
-      onPanResponderMove: (_, gestureState) => {
-        if (Math.abs(gestureState.dx) > 5 || Math.abs(gestureState.dy) > 5) {
+      // 拖动时直接设值，不做边界计算，保证流畅
+      onPanResponderMove: (_, gs) => {
+        if (Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5) {
           isDragging.current = true;
         }
-        const newX = lastOffset.current.x + gestureState.dx;
-        const newY = lastOffset.current.y + gestureState.dy;
-        const clamped = clampPosition(newX, newY);
-        pan.setValue(clamped);
+        panX.setValue(lastOffset.current.x + gs.dx);
+        panY.setValue(lastOffset.current.y + gs.dy);
       },
-      onPanResponderRelease: (_, gestureState) => {
-        const newX = lastOffset.current.x + gestureState.dx;
-        const newY = lastOffset.current.y + gestureState.dy;
-        const clamped = clampPosition(newX, newY);
-
-        // 吸附到左右边缘
-        const { width: w } = Dimensions.get('window');
+      onPanResponderRelease: (_, gs) => {
+        // 松手后再做边界修正 + 吸附
+        const raw = {
+          x: lastOffset.current.x + gs.dx,
+          y: lastOffset.current.y + gs.dy,
+        };
+        const clamped = clampPosition(raw.x, raw.y);
+        const { width: w } = dims.current;
         const midX = (w - ICON_SIZE) / 2;
         const targetX = clamped.x < midX ? 8 : w - ICON_SIZE - 8;
 
-        Animated.spring(pan, {
-          toValue: { x: targetX, y: clamped.y },
-          friction: 7,
-          useNativeDriver: false,
-        }).start();
+        Animated.parallel([
+          Animated.spring(panX, {
+            toValue: targetX,
+            friction: 7,
+            useNativeDriver: false,
+          }),
+          Animated.spring(panY, {
+            toValue: clamped.y,
+            friction: 7,
+            useNativeDriver: false,
+          }),
+        ]).start();
 
         lastOffset.current = { x: targetX, y: clamped.y };
 
-        // 如果不是拖拽，视为点击
         if (!isDragging.current) {
           onPress?.();
         }
@@ -160,17 +165,15 @@ export default function FloatingAIAssistant({ onPress }) {
   ).current;
 
   // 气泡显示在图标左侧还是右侧
-  const bubbleOnLeft = lastOffset.current.x > Dimensions.get('window').width / 2;
+  const bubbleOnLeft = lastOffset.current.x > dims.current.width / 2;
 
   return (
     <Animated.View
       style={[
         styles.container,
         {
-          transform: [
-            { translateX: pan.x },
-            { translateY: pan.y },
-          ],
+          left: panX,
+          top: panY,
         },
       ]}
       {...panResponder.panHandlers}
@@ -180,7 +183,7 @@ export default function FloatingAIAssistant({ onPress }) {
         <Animated.View
           style={[
             styles.bubble,
-            bubbleOnLeft ? styles.bubbleLeft : styles.bubbleRight,
+            styles.bubbleOnLeft,
             {
               opacity: bubbleOpacity,
               transform: [{ scale: bubbleScale }],
@@ -192,7 +195,7 @@ export default function FloatingAIAssistant({ onPress }) {
           <View
             style={[
               styles.bubbleArrow,
-              bubbleOnLeft ? styles.arrowRight : styles.arrowLeft,
+              styles.arrowPointRight,
             ]}
           />
         </Animated.View>
@@ -246,7 +249,7 @@ const styles = StyleSheet.create({
   bubble: {
     position: 'absolute',
     width: BUBBLE_WIDTH,
-    backgroundColor: '#95EC69',
+    backgroundColor: 'rgba(255, 255, 255, 0.85)',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -267,11 +270,13 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  bubbleRight: {
+  bubbleOnLeft: {
     right: ICON_SIZE + 10,
   },
-  bubbleLeft: {
-    left: ICON_SIZE + 10,
+  arrowPointRight: {
+    right: -8,
+    borderLeftWidth: 8,
+    borderLeftColor: 'rgba(255, 255, 255, 0.85)',
   },
   bubbleText: {
     fontSize: 14,
@@ -288,15 +293,5 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
     top: '50%',
     marginTop: -6,
-  },
-  arrowRight: {
-    right: -8,
-    borderLeftWidth: 8,
-    borderLeftColor: '#95EC69',
-  },
-  arrowLeft: {
-    left: -8,
-    borderRightWidth: 8,
-    borderRightColor: '#95EC69',
   },
 });
