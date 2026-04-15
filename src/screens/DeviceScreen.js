@@ -107,15 +107,32 @@ export default function DeviceScreen() {
   };
 
   const prepareChartData = (data, label) => {
-    const last7Days = data.slice(-7);
+    // 按天聚合数据，计算每天的平均值
+    const dailyMap = {};
+    data.forEach((item) => {
+      const date = new Date(item.date);
+      const key = `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+      if (!dailyMap[key]) {
+        dailyMap[key] = { sum: 0, count: 0, date };
+      }
+      dailyMap[key].sum += parseFloat(item.value);
+      dailyMap[key].count += 1;
+    });
+
+    // 按日期排序，取最近7天
+    const sortedDays = Object.values(dailyMap)
+      .sort((a, b) => a.date - b.date)
+      .slice(-7);
+
     return {
-      labels: last7Days.map((item) => {
-        const date = new Date(item.date);
-        return `${date.getMonth() + 1}/${date.getDate()}`;
-      }),
+      labels: sortedDays.map(
+        (d) => `${d.date.getMonth() + 1}/${d.date.getDate()}`
+      ),
       datasets: [
         {
-          data: last7Days.map((item) => item.value),
+          data: sortedDays.map((d) =>
+            parseFloat((d.sum / d.count).toFixed(1))
+          ),
         },
       ],
     };
