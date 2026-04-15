@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Animated,
   Dimensions,
@@ -9,23 +9,22 @@ import {
   View,
 } from 'react-native';
 import { Text } from 'react-native-paper';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 import DoctorAvatar from './DoctorAvatar';
 
 const ICON_SIZE = 56;
-const BUBBLE_WIDTH = 220;
-const FIRST_VISIT_KEY = '@ai_assistant_first_visit';
+const BUBBLE_WIDTH = 260;
 
 /**
  * 浮动AI小助手组件
  * - 可拖拽移动
- * - 首次登录自动弹出欢迎气泡
- * - 点击跳转 AI助手 Tab
+ * - 每次挂载自动弹出欢迎气泡（5s）
+ * - 左键点击：读取待服药信息并显示气泡
+ * - 右键点击：弹出导航菜单（AI助手/设备/报告）
  */
-export default function FloatingAIAssistant({ onPress }) {
+export default function FloatingAIAssistant({ onNavigate, getPendingMedicines }) {
   const dims = useRef(Dimensions.get('window'));
 
-  // 初始位置：右下角，距底部 tab 栏上方
   const initialX = dims.current.width - ICON_SIZE - 16;
   const initialY = dims.current.height - ICON_SIZE - 160;
 
@@ -33,14 +32,22 @@ export default function FloatingAIAssistant({ onPress }) {
   const panY = useRef(new Animated.Value(initialY)).current;
   const lastOffset = useRef({ x: initialX, y: initialY });
 
-  // 气泡
+  // 气泡内容
   const [showBubble, setShowBubble] = useState(false);
+  const [bubbleContent, setBubbleContent] = useState('');
   const bubbleOpacity = useRef(new Animated.Value(0)).current;
   const bubbleScale = useRef(new Animated.Value(0.6)).current;
+  const bubbleTimerRef = useRef(null);
+
+  // 右键菜单
+  const [showMenu, setShowMenu] = useState(false);
+  const menuOpacity = useRef(new Animated.Value(0)).current;
+  const menuScale = useRef(new Animated.Value(0.7)).current;
 
   // 拖拽标志
   const isDragging = useRef(false);
-  const bubbleRef = useRef(false); // 用 ref 避免 PanResponder 闭包陈旧问题
+  const bubbleVisibleRef = useRef(false);
+  const menuVisibleRef = useRef(false);
 
   // 呼吸动画
   const breathAnim = useRef(new Animated.Value(1)).current;
@@ -49,7 +56,6 @@ export default function FloatingAIAssistant({ onPress }) {
     const sub = Dimensions.addEventListener('change', ({ window }) => {
       dims.current = window;
     });
-    // 呼吸动画循环
     const breathLoop = Animated.loop(
       Animated.sequence([
         Animated.timing(breathAnim, {
@@ -66,46 +72,102 @@ export default function FloatingAIAssistant({ onPress }) {
     );
     breathLoop.start();
 
-    // 每次挂载（打开页面/刷新）都弹出欢迎气泡
-    const bubbleTimer = setTimeout(() => {
-      showWelcomeBubble();
+    // 欢迎气泡
+    const welcomeTimer = setTimeout(() => {
+      showBubbleWithContent('您好，我是您的个性化健康助手', 5000);
     }, 800);
 
-    return () => { breathLoop.stop(); sub?.remove?.(); clearTimeout(bubbleTimer); };
+    // Web 端注册右键事件拦截
+    return () => {
+      breathLoop.stop();
+      sub?.remove?.();
+      clearTimeout(welcomeTimer);
+      if (bubbleTimerRef.current) clearTimeout(bubbleTimerRef.current);
+    };
   }, []);
 
-  const showWelcomeBubble = () => {
+  // ---- 气泡控制 ----
+  const showBubbleWithContent = useCallback((text, duration = 6000) => {
+    if (bubbleTimerRef.current) clearTimeout(bubbleTimerRef.current);
+    // 如果菜单正在显示，先关闭
+    if (menuVisibleRef.current) hideMenu();
+
+    setBubbleContent(text);
     setShowBubble(true);
-    bubbleRef.current = true;
+    bubbleVisibleRef.current = true;
     bubbleOpacity.setValue(0);
     bubbleScale.setValue(0.6);
     Animated.parallel([
-      Animated.spring(bubbleOpacity, {
-        toValue: 1,
-        useNativeDriver: true,
-      }),
-      Animated.spring(bubbleScale, {
-        toValue: 1,
-        friction: 6,
-        useNativeDriver: true,
-      }),
+      Animated.spring(bubbleOpacity, { toValue: 1, useNativeDriver: true }),
+      Animated.spring(bubbleScale, { toValue: 1, friction: 6, useNativeDriver: true }),
     ]).start();
-    // 5秒后自动隐藏
-    setTimeout(() => hideBubble(), 5000);
-  };
+    bubbleTimerRef.current = setTimeout(() => hideBubble(), duration);
+  }, []);
 
-  const hideBubble = () => {
+  const hideBubble = useCallback(() => {
+    if (bubbleTimerRef.current) clearTimeout(bubbleTimerRef.current);
     Animated.timing(bubbleOpacity, {
       toValue: 0,
-      duration: 300,
+      duration: 250,
       useNativeDriver: true,
     }).start(() => {
       setShowBubble(false);
-      bubbleRef.current = false;
+      bubbleVisibleRef.current = false;
     });
-  };
+  }, []);
 
-  // 限制边界（仅在松手时调用）
+  // ---- 右键菜单控制 ----
+  const showMenuPopup = useCallback(() => {
+    if (bubbleVisibleRef.current) hideBubble();
+    setShowMenu(true);
+    menuVisibleRef.current = true;
+    menuOpacity.setValue(0);
+    menuScale.setValue(0.7);
+    Animated.parallel([
+      Animated.spring(menuOpacity, { toValue: 1, useNativeDriver: true }),
+      Animated.spring(menuScale, { toValue: 1, friction: 6, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  const hideMenu = useCallback(() => {
+    Animated.timing(menuOpacity, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowMenu(false);
+      menuVisibleRef.current = false;
+    });
+  }, []);
+
+  const handleMenuSelect = useCallback((target) => {
+    hideMenu();
+    onNavigate?.(target);
+  }, [onNavigate]);
+
+  // ---- 左键点击：获取待服药信息 ----
+  const handleLeftClick = useCallback(async () => {
+    if (menuVisibleRef.current) {
+      hideMenu();
+      return;
+    }
+    try {
+      const pending = await getPendingMedicines?.();
+      if (!pending || pending.length === 0) {
+        showBubbleWithContent('您当前没有待服用的药品，继续保持哦~', 5000);
+      } else {
+        const lines = pending.map((item) => {
+          return `💊 ${item.name} 记得在 ${item.time} 服用`;
+        });
+        const text = '您还有待服药品：\n' + lines.join('\n');
+        showBubbleWithContent(text, 8000);
+      }
+    } catch (e) {
+      showBubbleWithContent('您好，我是您的个性化健康助手', 5000);
+    }
+  }, [getPendingMedicines, showBubbleWithContent]);
+
+  // ---- 边界限制 ----
   const clampPosition = (x, y) => {
     const { width: w, height: h } = dims.current;
     return {
@@ -121,9 +183,9 @@ export default function FloatingAIAssistant({ onPress }) {
         Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5,
       onPanResponderGrant: () => {
         isDragging.current = false;
-        if (bubbleRef.current) hideBubble();
+        if (bubbleVisibleRef.current) hideBubble();
+        if (menuVisibleRef.current) hideMenu();
       },
-      // 拖动时直接设值，不做边界计算，保证流畅
       onPanResponderMove: (_, gs) => {
         if (Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5) {
           isDragging.current = true;
@@ -132,7 +194,6 @@ export default function FloatingAIAssistant({ onPress }) {
         panY.setValue(lastOffset.current.y + gs.dy);
       },
       onPanResponderRelease: (_, gs) => {
-        // 松手后再做边界修正 + 吸附
         const raw = {
           x: lastOffset.current.x + gs.dx,
           y: lastOffset.current.y + gs.dy,
@@ -143,42 +204,45 @@ export default function FloatingAIAssistant({ onPress }) {
         const targetX = clamped.x < midX ? 8 : w - ICON_SIZE - 8;
 
         Animated.parallel([
-          Animated.spring(panX, {
-            toValue: targetX,
-            friction: 7,
-            useNativeDriver: false,
-          }),
-          Animated.spring(panY, {
-            toValue: clamped.y,
-            friction: 7,
-            useNativeDriver: false,
-          }),
+          Animated.spring(panX, { toValue: targetX, friction: 7, useNativeDriver: false }),
+          Animated.spring(panY, { toValue: clamped.y, friction: 7, useNativeDriver: false }),
         ]).start();
 
         lastOffset.current = { x: targetX, y: clamped.y };
 
+        // 非拖拽时视为左键点击
         if (!isDragging.current) {
-          onPress?.();
+          handleLeftClick();
         }
       },
     })
   ).current;
 
-  // 气泡显示在图标左侧还是右侧
-  const bubbleOnLeft = lastOffset.current.x > dims.current.width / 2;
+  // Web 端右键事件
+  const onContextMenu = useCallback((e) => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    if (isDragging.current) return;
+    showMenuPopup();
+  }, [showMenuPopup]);
+
+  const menuItems = [
+    { key: 'AI助手', label: '询问对话', icon: 'chatbubble-ellipses-outline' },
+    { key: '设备', label: '设备详情', icon: 'watch-outline' },
+    { key: '报告', label: '个人状况', icon: 'document-text-outline' },
+  ];
 
   return (
     <Animated.View
       style={[
         styles.container,
-        {
-          left: panX,
-          top: panY,
-        },
+        { left: panX, top: panY },
       ]}
       {...panResponder.panHandlers}
+      // Web 端拦截右键
+      {...(Platform.OS === 'web' ? { onContextMenu } : {})}
     >
-      {/* 气泡 */}
+      {/* 信息气泡 */}
       {showBubble && (
         <Animated.View
           style={[
@@ -190,14 +254,38 @@ export default function FloatingAIAssistant({ onPress }) {
             },
           ]}
         >
-          <Text style={styles.bubbleText}>您好，我是您的个性化健康助手</Text>
-          {/* 气泡小三角 */}
-          <View
-            style={[
-              styles.bubbleArrow,
-              styles.arrowPointRight,
-            ]}
-          />
+          <Text style={styles.bubbleText}>{bubbleContent}</Text>
+          <View style={[styles.bubbleArrow, styles.arrowPointRight]} />
+        </Animated.View>
+      )}
+
+      {/* 右键菜单 */}
+      {showMenu && (
+        <Animated.View
+          style={[
+            styles.menu,
+            styles.bubbleOnLeft,
+            {
+              opacity: menuOpacity,
+              transform: [{ scale: menuScale }],
+            },
+          ]}
+        >
+          {menuItems.map((item, idx) => (
+            <TouchableOpacity
+              key={item.key}
+              style={[
+                styles.menuItem,
+                idx < menuItems.length - 1 && styles.menuItemBorder,
+              ]}
+              onPress={() => handleMenuSelect(item.key)}
+              activeOpacity={0.6}
+            >
+              <Ionicons name={item.icon} size={18} color="#2563EB" style={styles.menuIcon} />
+              <Text style={styles.menuText}>{item.label}</Text>
+            </TouchableOpacity>
+          ))}
+          <View style={[styles.bubbleArrow, styles.arrowPointRight, { top: 20 }]} />
         </Animated.View>
       )}
 
@@ -214,6 +302,8 @@ export default function FloatingAIAssistant({ onPress }) {
   );
 }
 
+const BUBBLE_BG = 'rgba(255, 255, 255, 0.92)';
+
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
@@ -227,7 +317,6 @@ const styles = StyleSheet.create({
     width: ICON_SIZE,
     height: ICON_SIZE,
     borderRadius: ICON_SIZE / 2,
-    // 阴影
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -235,9 +324,7 @@ const styles = StyleSheet.create({
         shadowRadius: 8,
         shadowOffset: { width: 0, height: 4 },
       },
-      android: {
-        elevation: 8,
-      },
+      android: { elevation: 8 },
       web: {
         shadowColor: '#000',
         shadowOpacity: 0.25,
@@ -246,41 +333,28 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  // ---- 气泡 ----
   bubble: {
     position: 'absolute',
-    width: BUBBLE_WIDTH,
-    backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    minWidth: 200,
+    maxWidth: BUBBLE_WIDTH,
+    backgroundColor: BUBBLE_BG,
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     bottom: 4,
     ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-      },
+      ios: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
       android: { elevation: 4 },
-      web: {
-        shadowColor: '#000',
-        shadowOpacity: 0.15,
-        shadowRadius: 6,
-        shadowOffset: { width: 0, height: 2 },
-      },
+      web: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
     }),
   },
   bubbleOnLeft: {
     right: ICON_SIZE + 10,
   },
-  arrowPointRight: {
-    right: -8,
-    borderLeftWidth: 8,
-    borderLeftColor: 'rgba(255, 255, 255, 0.85)',
-  },
   bubbleText: {
-    fontSize: 14,
-    color: '#000',
+    fontSize: 13,
+    color: '#1E293B',
     lineHeight: 20,
   },
   bubbleArrow: {
@@ -293,5 +367,41 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
     top: '50%',
     marginTop: -6,
+  },
+  arrowPointRight: {
+    right: -8,
+    borderLeftWidth: 8,
+    borderLeftColor: BUBBLE_BG,
+  },
+  // ---- 右键菜单 ----
+  menu: {
+    position: 'absolute',
+    width: 160,
+    backgroundColor: BUBBLE_BG,
+    borderRadius: 10,
+    paddingVertical: 4,
+    bottom: -10,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+      android: { elevation: 6 },
+      web: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+    }),
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  menuItemBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  menuIcon: {
+    marginRight: 10,
+  },
+  menuText: {
+    fontSize: 14,
+    color: '#1E293B',
   },
 });

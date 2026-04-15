@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Image, View, StyleSheet, TouchableOpacity } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -256,9 +256,31 @@ export default function App() {
             <Tab.Screen name="报告" component={ReportScreen} />
           </Tab.Navigator>
           <FloatingAIAssistant
-            onPress={() => {
+            onNavigate={(target) => {
               if (navigationRef.isReady()) {
-                navigationRef.navigate('AI助手');
+                navigationRef.navigate(target);
+              }
+            }}
+            getPendingMedicines={async () => {
+              try {
+                const allMeds = await MedicineService.getAllMedicines();
+                const pending = [];
+                for (const med of allMeds) {
+                  const todayReminders = await MedicineService.getTodayReminders(med.id);
+                  const notTaken = todayReminders.filter(
+                    (r) => r.status === 'scheduled' || r.status === 'snoozed'
+                  );
+                  for (const r of notTaken) {
+                    const d = new Date(r.scheduledAt);
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    pending.push({ name: med.name, time: `${hh}:${mm}` });
+                  }
+                }
+                return pending;
+              } catch (e) {
+                console.warn('获取待服药品失败:', e);
+                return [];
               }
             }}
           />
