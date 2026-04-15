@@ -16,6 +16,7 @@ import ReportScreen from './src/screens/ReportScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import AIScreen from './src/screens/AIScreen';
 import AIIcon from './src/components/AIIcon';
+import FloatingAIAssistant from './src/components/FloatingAIAssistant';
 import { theme } from './src/theme';
 import {
   MedicineService,
@@ -203,6 +204,7 @@ export default function App() {
         ) : !authed ? (
           <AuthScreen onAuthed={async () => setAuthed(await AuthService.isLoggedIn())} />
         ) : (
+          <View style={{ flex: 1 }}>
           <Tab.Navigator
             screenOptions={({ route }) => ({
               tabBarIcon: ({ focused, color, size }) => {
@@ -253,6 +255,14 @@ export default function App() {
             <Tab.Screen name="AI助手" component={AIScreen} />
             <Tab.Screen name="报告" component={ReportScreen} />
           </Tab.Navigator>
+          <FloatingAIAssistant
+            onPress={() => {
+              if (navigationRef.isReady()) {
+                navigationRef.navigate('AI助手');
+              }
+            }}
+          />
+          </View>
         )}
       </NavigationContainer>
     </PaperProvider>
