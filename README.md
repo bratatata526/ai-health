@@ -403,7 +403,3 @@ eas build -p ios --profile preview
 ```
 
 
-
-
-
-tryonce

@@ -16,7 +16,11 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.aihealthmanager.app"
+      "bundleIdentifier": "com.aihealthmanager.app",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "需要蓝牙权限以连接手环并读取心率数据",
+        "NSBluetoothPeripheralUsageDescription": "需要蓝牙权限以连接手环并读取心率数据"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -27,7 +31,12 @@
       "permissions": [
         "CAMERA",
         "NOTIFICATIONS",
-        "RECORD_AUDIO"
+        "RECORD_AUDIO",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -44,10 +53,7 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#4A90E2",
-          "sounds": [
-            "./assets/notification-sound.wav"
-          ]
+          "color": "#4A90E2"
         }
       ]
     ],

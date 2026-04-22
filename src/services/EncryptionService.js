@@ -40,45 +40,39 @@ export class EncryptionService {
    * @returns {Promise<string>} 解密后的原始数据（JSON字符串）
    */
   static async decrypt(encryptedData) {
+    if (encryptedData == null || encryptedData === '') {
+      return encryptedData;
+    }
+    if (typeof encryptedData !== 'string' || encryptedData.length < 20) {
+      return encryptedData;
+    }
+
     try {
-      if (!encryptedData) {
-        return encryptedData;
-      }
-
-      // 检查是否是加密数据（加密数据通常是base64格式，长度较长）
-      // 简单检查：如果数据看起来不像加密数据，直接返回
-      if (typeof encryptedData !== 'string' || encryptedData.length < 20) {
-        // 可能是旧数据（未加密），尝试直接返回
-        return encryptedData;
-      }
-
-      // 获取加密密钥
       const key = await KeyManager.getOrCreateKey();
-
-      // 解密数据
       const decrypted = CryptoJS.AES.decrypt(encryptedData, key, {
         mode: CryptoJS.mode.CBC,
         padding: CryptoJS.pad.Pkcs7,
       });
 
-      // 转换为UTF-8字符串
-      const decryptedString = decrypted.toString(CryptoJS.enc.Utf8);
+      let decryptedString;
+      try {
+        decryptedString = decrypted.toString(CryptoJS.enc.Utf8);
+      } catch {
+        // 密钥与密文不匹配或密文损坏时，解密结果常无法转为合法 UTF-8（Malformed UTF-8 data）
+        return null;
+      }
 
-      // 如果解密失败，返回空字符串或原始数据
-      if (!decryptedString) {
-        // 可能是旧数据（未加密），尝试直接返回
-        return encryptedData;
+      if (!decryptedString || !decryptedString.trim()) {
+        return null;
       }
 
       return decryptedString;
     } catch (error) {
-      console.error('解密失败:', error);
-      // 如果解密失败，可能是旧数据（未加密），尝试直接返回
-      try {
-        return encryptedData;
-      } catch {
-        throw new Error('数据解密失败');
+      const msg = String(error?.message ?? error);
+      if (msg.includes('Malformed UTF-8') || msg.includes('UTF-8')) {
+        return null;
       }
+      return null;
     }
   }
 
@@ -103,19 +97,14 @@ export class EncryptionService {
    * @returns {Promise<any>} 解密后的对象
    */
   static async decryptObject(encryptedData) {
+    const decryptedString = await this.decrypt(encryptedData);
+    if (decryptedString == null) {
+      return null;
+    }
     try {
-      const decryptedString = await this.decrypt(encryptedData);
-      
-      // 尝试解析JSON
-      try {
-        return JSON.parse(decryptedString);
-      } catch (parseError) {
-        // 如果不是JSON，返回原始字符串
-        return decryptedString;
-      }
-    } catch (error) {
-      console.error('解密对象失败:', error);
-      throw error;
+      return JSON.parse(decryptedString);
+    } catch (parseError) {
+      return decryptedString;
     }
   }
 

@@ -6,6 +6,7 @@ import {
   RefreshControl,
   Dimensions,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import {
   Card,
@@ -13,7 +14,6 @@ import {
   Paragraph,
   Button,
   Text,
-  ProgressBar,
   Chip,
 } from 'react-native-paper';
 import { LineChart } from 'react-native-chart-kit';
@@ -22,11 +22,16 @@ import { theme } from '../theme';
 import { DeviceService } from '../services/DeviceService';
 import { ExportService } from '../services/ExportService';
 import { Alert } from 'react-native';
+import { bleHeartRateService } from '../services/BleHeartRateService';
 
 const { width } = Dimensions.get('window');
 
 export default function DeviceScreen() {
   const [devices, setDevices] = useState([]);
+  const [nearbyDevices, setNearbyDevices] = useState([]);
+  const [scanning, setScanning] = useState(false);
+  const [connectingDeviceId, setConnectingDeviceId] = useState(null);
+  const [liveHeartRate, setLiveHeartRate] = useState(null);
   const [healthData, setHealthData] = useState({
     heartRate: [],
     bloodGlucose: [],
@@ -41,31 +46,31 @@ export default function DeviceScreen() {
 
   useEffect(() => {
     loadData();
-    // 模拟实时数据更新
-    const interval = setInterval(() => {
-      loadData();
-    }, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      bleHeartRateService.stopScan();
+      bleHeartRateService.disconnectCurrentDevice();
+    };
   }, []);
 
   const loadData = async () => {
     const deviceData = await DeviceService.getConnectedDevices();
     const data = await DeviceService.getHealthData();
-    
+
     setDevices(deviceData);
     setHealthData(data);
-    
+
     // 计算今日统计数据
     const today = new Date().toDateString();
     const todayData = data.heartRate.filter(
       (item) => new Date(item.date).toDateString() === today
     );
-    
+
     if (todayData.length > 0) {
-      const avgHeartRate = todayData.reduce((sum, item) => sum + item.value, 0) / todayData.length;
+      const avgHeartRate =
+        todayData.reduce((sum, item) => sum + item.value, 0) / todayData.length;
       const latestGlucose = data.bloodGlucose[data.bloodGlucose.length - 1]?.value || 0;
       const latestSleep = data.sleep[data.sleep.length - 1]?.value || 0;
-      
+
       setTodayStats({
         heartRate: Math.round(avgHeartRate),
         bloodGlucose: latestGlucose,
@@ -89,9 +94,97 @@ export default function DeviceScreen() {
       connected: true,
       battery: Math.floor(Math.random() * 30) + 70,
     };
-    
+
     await DeviceService.addDevice(newDevice);
     loadData();
+  };
+
+  const startScan = async () => {
+    try {
+      if (Platform.OS === 'web') {
+        Alert.alert('提示', '蓝牙连接仅支持安卓/iOS 手机端，请使用开发版 App 测试');
+        return;
+      }
+      const granted = await bleHeartRateService.requestPermissions();
+      if (!granted) {
+        Alert.alert('权限不足', '请允许蓝牙权限后再扫描设备');
+        return;
+      }
+
+      setNearbyDevices([]);
+      setScanning(true);
+
+      bleHeartRateService.scanHeartRateDevices(
+        (device) => {
+          setNearbyDevices((prev) => {
+            if (prev.some((item) => item.id === device.id)) return prev;
+            return [...prev, device];
+          });
+        },
+        (error) => {
+          console.error('扫描设备失败:', error);
+          Alert.alert('扫描失败', '蓝牙扫描异常，请确认手环已开启并靠近手机');
+          setScanning(false);
+        },
+        12000
+      );
+
+      setTimeout(() => setScanning(false), 12500);
+    } catch (error) {
+      console.error('启动扫描失败:', error);
+      setScanning(false);
+      Alert.alert('扫描失败', '无法启动蓝牙扫描');
+    }
+  };
+
+  const stopScan = () => {
+    bleHeartRateService.stopScan();
+    setScanning(false);
+  };
+
+  const connectHeartRateDevice = async (device) => {
+    try {
+      setConnectingDeviceId(device.id);
+      const connectedDevice = await bleHeartRateService.connectAndMonitorHeartRate(
+        device.id,
+        async (bpm) => {
+          setLiveHeartRate(bpm);
+          await DeviceService.updateHealthData({
+            heartRate: [{ date: new Date().toISOString(), value: bpm }],
+            bloodGlucose: [],
+            sleep: [],
+          });
+          await loadData();
+        }
+      );
+
+      await DeviceService.addOrReplaceDevice({
+        ...connectedDevice,
+        name: device.name || connectedDevice.name,
+      });
+      await loadData();
+      Alert.alert('连接成功', `已连接 ${device.name}，正在接收实时心率`);
+    } catch (error) {
+      console.error('连接手环失败:', error);
+      Alert.alert(
+        '连接失败',
+        '请确认设备支持标准 BLE 心率服务(0x180D)，并且没有被其他 App 占用'
+      );
+    } finally {
+      setConnectingDeviceId(null);
+    }
+  };
+
+  const disconnectHeartRateDevice = async (deviceId) => {
+    try {
+      await bleHeartRateService.disconnectCurrentDevice();
+      await DeviceService.removeDevice(deviceId);
+      setLiveHeartRate(null);
+      await loadData();
+    } catch (error) {
+      console.error('断开连接失败:', error);
+      Alert.alert('操作失败', '断开设备失败，请重试');
+    }
   };
 
   const chartConfig = {
@@ -153,7 +246,9 @@ export default function DeviceScreen() {
             <View style={styles.statsGrid}>
               <View style={styles.statItem}>
                 <Ionicons name="heart" size={32} color={theme.colors.error} />
-                <Text style={styles.statValue}>{todayStats.heartRate}</Text>
+                <Text style={styles.statValue}>
+                  {liveHeartRate != null ? liveHeartRate : todayStats.heartRate}
+                </Text>
                 <Text style={styles.statLabel}>心率 (bpm)</Text>
               </View>
               <View style={styles.statItem}>
@@ -174,27 +269,29 @@ export default function DeviceScreen() {
         <Card style={styles.card}>
           <Card.Content>
             <Title style={styles.sectionTitle}>已连接设备</Title>
+            <View style={styles.deviceButtons}>
+              <Button
+                mode="outlined"
+                icon="watch"
+                onPress={startScan}
+                style={styles.deviceButton}
+                loading={scanning}
+                disabled={scanning}
+              >
+                {scanning ? '扫描中...' : '扫描手环'}
+              </Button>
+              <Button
+                mode="outlined"
+                icon="pulse"
+                onPress={() => connectDevice('glucometer')}
+                style={styles.deviceButton}
+              >
+                连接血糖仪
+              </Button>
+            </View>
             {devices.length === 0 ? (
               <View style={styles.emptyDevices}>
                 <Paragraph style={styles.emptyText}>暂无连接设备</Paragraph>
-                <View style={styles.deviceButtons}>
-                  <Button
-                    mode="outlined"
-                    icon="watch"
-                    onPress={() => connectDevice('bracelet')}
-                    style={styles.deviceButton}
-                  >
-                    连接手环
-                  </Button>
-                  <Button
-                    mode="outlined"
-                    icon="pulse"
-                    onPress={() => connectDevice('glucometer')}
-                    style={styles.deviceButton}
-                  >
-                    连接血糖仪
-                  </Button>
-                </View>
               </View>
             ) : (
               devices.map((device) => (
@@ -218,8 +315,53 @@ export default function DeviceScreen() {
                   >
                     {device.battery}%
                   </Chip>
+                  {device.type === 'bracelet' && (
+                    <Button
+                      mode="text"
+                      onPress={() => disconnectHeartRateDevice(device.id)}
+                    >
+                      断开
+                    </Button>
+                  )}
                 </View>
               ))
+            )}
+
+            {nearbyDevices.length > 0 && (
+              <View style={styles.nearbySection}>
+                <Text style={styles.nearbyTitle}>可连接手环</Text>
+                {nearbyDevices.map((device) => (
+                  <View key={device.id} style={styles.nearbyDeviceItem}>
+                    <View style={styles.nearbyDeviceInfo}>
+                      <Text style={styles.deviceName}>{device.name}</Text>
+                      <Text style={styles.deviceStatus}>
+                        信号: {device.rssi} dBm
+                      </Text>
+                    </View>
+                    <Button
+                      mode="contained"
+                      compact
+                      onPress={() => connectHeartRateDevice(device)}
+                      disabled={!!connectingDeviceId}
+                      loading={connectingDeviceId === device.id}
+                    >
+                      连接
+                    </Button>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {scanning && (
+              <View style={styles.scanHint}>
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+                <Text style={styles.scanHintText}>
+                  请保持手环亮屏并靠近手机
+                </Text>
+                <Button mode="text" compact onPress={stopScan}>
+                  停止扫描
+                </Button>
+              </View>
             )}
           </Card.Content>
         </Card>
@@ -425,6 +567,38 @@ const styles = StyleSheet.create({
   batteryChip: {
     backgroundColor: theme.colors.surfaceVariant,
   },
+  nearbySection: {
+    marginTop: theme.spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.outlineVariant,
+    paddingTop: theme.spacing.sm,
+  },
+  nearbyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: theme.spacing.sm,
+    color: theme.colors.text,
+  },
+  nearbyDeviceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: theme.spacing.xs,
+  },
+  nearbyDeviceInfo: {
+    flex: 1,
+    marginRight: theme.spacing.sm,
+  },
+  scanHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: theme.spacing.sm,
+    gap: theme.spacing.xs,
+  },
+  scanHintText: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+  },
   chart: {
     marginVertical: theme.spacing.sm,
     borderRadius: theme.borderRadius.md,
@@ -433,4 +607,3 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
   },
 });
-

@@ -7,7 +7,7 @@ export class DeviceService {
   static async getConnectedDevices() {
     try {
       const data = await SecureStorage.getItem(DEVICES_KEY);
-      return data || [];
+      return Array.isArray(data) ? data : [];
     } catch (error) {
       console.error('获取设备列表失败:', error);
       return [];
@@ -26,6 +26,23 @@ export class DeviceService {
     }
   }
 
+  static async addOrReplaceDevice(device) {
+    try {
+      const devices = await this.getConnectedDevices();
+      const index = devices.findIndex((d) => d.id === device.id);
+      if (index >= 0) {
+        devices[index] = { ...devices[index], ...device };
+      } else {
+        devices.push(device);
+      }
+      await SecureStorage.setItem(DEVICES_KEY, devices);
+      return device;
+    } catch (error) {
+      console.error('保存设备失败:', error);
+      throw error;
+    }
+  }
+
   static async removeDevice(deviceId) {
     try {
       const devices = await this.getConnectedDevices();
@@ -37,13 +54,28 @@ export class DeviceService {
     }
   }
 
+  static _normalizeHealthData(data) {
+    if (
+      data &&
+      typeof data === 'object' &&
+      !Array.isArray(data) &&
+      Array.isArray(data.heartRate) &&
+      Array.isArray(data.bloodGlucose) &&
+      Array.isArray(data.sleep)
+    ) {
+      return data;
+    }
+    return null;
+  }
+
   static async getHealthData() {
     try {
       const data = await SecureStorage.getItem(HEALTH_DATA_KEY);
-      if (data) {
-        return data;
+      const normalized = this._normalizeHealthData(data);
+      if (normalized) {
+        return normalized;
       }
-      
+
       // 如果没有数据，生成模拟数据
       return this.generateMockData();
     } catch (error) {

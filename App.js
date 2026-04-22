@@ -1,3 +1,4 @@
+import 'react-native-get-random-values';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Image, View, StyleSheet, TouchableOpacity } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';

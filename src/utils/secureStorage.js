@@ -80,14 +80,23 @@ export const SecureStorage = {
           } catch {
             // 不是JSON，可能是加密数据，尝试解密
             const decrypted = await EncryptionService.decrypt(value);
+            if (decrypted == null || decrypted === '') {
+              throw new Error('decrypt_unavailable');
+            }
             return JSON.parse(decrypted);
           }
         } catch (error) {
-          // 解密失败，可能是旧数据（未加密），尝试直接解析
-          console.warn(`解密失败，尝试直接解析: ${key}`, error);
+          // 解密失败或密文用旧密钥加密，尝试当明文 JSON（兼容未加密老数据）
+          if (__DEV__ && !String(error?.message || '').includes('decrypt_unavailable')) {
+            console.warn(`敏感数据读失败，尝试直接解析: ${key}`);
+          }
           try {
             return JSON.parse(value);
           } catch {
+            // 密文/损坏数据无法当 JSON 解析，勿返回原字符串（会导致调用方把字符串当对象用）
+            if (isSensitiveKey(key)) {
+              return null;
+            }
             return value;
           }
         }
@@ -190,10 +199,21 @@ export const SecureStorage = {
             if (isSensitiveKey(key)) {
               try {
                 const decrypted = await EncryptionService.decrypt(value);
-                result[key] = JSON.parse(decrypted);
+                if (decrypted != null && decrypted !== '') {
+                  result[key] = JSON.parse(decrypted);
+                } else {
+                  try {
+                    result[key] = JSON.parse(value);
+                  } catch {
+                    /* 密文无法当 JSON */
+                  }
+                }
               } catch {
-                // 解密失败，尝试直接解析（可能是旧数据）
-                result[key] = JSON.parse(value);
+                try {
+                  result[key] = JSON.parse(value);
+                } catch {
+                  /* 跳过损坏项 */
+                }
               }
             } else {
               result[key] = JSON.parse(value);
