@@ -125,6 +125,12 @@ export class AutoCloudSyncService {
           // 自动同步遇到冲突：暂停，避免不断重试/覆盖
           this._blockedByConflict = true;
           console.warn('Auto cloud sync blocked by conflict. Please sync down or force upload manually.');
+        } else if (
+          msg.includes('unauthorized') ||
+          msg.includes('未登录') ||
+          msg.includes('401')
+        ) {
+          // Token 失效或未授权：不刷屏，用户重新登录即可
         } else {
           console.warn('Auto cloud sync failed:', msg || e);
         }

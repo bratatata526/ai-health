@@ -26,6 +26,23 @@ export class DeviceService {
     }
   }
 
+  static async addOrReplaceDevice(device) {
+    try {
+      const devices = await this.getConnectedDevices();
+      const index = devices.findIndex((d) => d.id === device.id);
+      if (index >= 0) {
+        devices[index] = { ...devices[index], ...device };
+      } else {
+        devices.push(device);
+      }
+      await SecureStorage.setItem(DEVICES_KEY, devices);
+      return device;
+    } catch (error) {
+      console.error('保存设备失败:', error);
+      throw error;
+    }
+  }
+
   static async removeDevice(deviceId) {
     try {
       const devices = await this.getConnectedDevices();
@@ -40,11 +57,12 @@ export class DeviceService {
   static async getHealthData() {
     try {
       const data = await SecureStorage.getItem(HEALTH_DATA_KEY);
-      if (data) {
+      if (data && typeof data === 'object' && !Array.isArray(data)
+          && Array.isArray(data.heartRate)) {
         return data;
       }
       
-      // 如果没有数据，生成模拟数据
+      // 数据格式异常或不存在，生成模拟数据
       return this.generateMockData();
     } catch (error) {
       console.error('获取健康数据失败:', error);

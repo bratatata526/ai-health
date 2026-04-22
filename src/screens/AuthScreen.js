@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
-import { ImageBackground } from 'react-native';
 import { Button, Card, Paragraph, Text, TextInput, Title } from 'react-native-paper';
 import { theme } from '../theme';
 import { AuthService } from '../services/AuthService';
@@ -66,11 +65,7 @@ export default function AuthScreen({ onAuthed }) {
   };
 
   return (
-    <ImageBackground
-      source={require('../../assets/bk_1.png')}
-      style={styles.container}
-      resizeMode="cover"
-    >
+    <View style={styles.container}>
       <View style={styles.overlay} />
       <Card style={styles.card}>
         <Card.Content>
@@ -139,7 +134,7 @@ export default function AuthScreen({ onAuthed }) {
           </Button>
         </Card.Content>
       </Card>
-    </ImageBackground>
+    </View>
   );
 }
 
@@ -149,6 +144,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: theme.spacing.md,
+    backgroundColor: '#DDEBFF',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,

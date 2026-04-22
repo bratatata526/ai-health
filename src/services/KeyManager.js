@@ -3,8 +3,14 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import CryptoJS from 'crypto-js';
 
-const ENCRYPTION_KEY_NAME = '@encryption_key';
-const KEY_LENGTH = 32; // AES-256需要32字节（256位）密钥
+/** SecureStore 键名只能包含字母数字和 . - _，不能含 @ */
+const ENCRYPTION_KEY_SECURE = 'ai_health.encryption_key_v1';
+/** AsyncStorage 备份键（可与 SecureStore 同名逻辑区分） */
+const ENCRYPTION_KEY_ASYNC = 'ai_health_encryption_key_async_v1';
+/** 旧版误用的键名（含 @，SecureStore 非法；可能落在 AsyncStorage） */
+const ENCRYPTION_KEY_LEGACY_ASYNC = '@encryption_key';
+
+const KEY_LENGTH = 32;
 
 /**
  * 密钥管理服务
@@ -12,50 +18,52 @@ const KEY_LENGTH = 32; // AES-256需要32字节（256位）密钥
  */
 export class KeyManager {
   /**
-   * 生成随机加密密钥
+   * 生成随机加密密钥（AES-256，32 字节 → 64 字符 hex）
+   * 需在入口最先执行：import 'react-native-get-random-values'（见 App.js）
    */
-  static generateKey() {
-    // 生成32字节的随机密钥（256位）
+  static async generateKeyAsync() {
     const randomBytes = CryptoJS.lib.WordArray.random(KEY_LENGTH);
     return randomBytes.toString(CryptoJS.enc.Hex);
   }
 
   /**
    * 获取或创建加密密钥
-   * 优先使用安全存储，如果不可用则使用AsyncStorage
+   * 优先使用安全存储，如果不可用则使用 AsyncStorage
    */
   static async getOrCreateKey() {
     try {
       let key = null;
 
-      // 尝试从安全存储获取
       if (Platform.OS !== 'web') {
         try {
-          key = await SecureStore.getItemAsync(ENCRYPTION_KEY_NAME);
+          key = await SecureStore.getItemAsync(ENCRYPTION_KEY_SECURE);
         } catch (error) {
-          console.log('SecureStore不可用，使用AsyncStorage:', error);
+          console.log('SecureStore 读取密钥跳过:', error?.message || error);
         }
       }
 
-      // 如果安全存储不可用或没有密钥，尝试从AsyncStorage获取
       if (!key) {
-        const storedKey = await AsyncStorage.getItem(ENCRYPTION_KEY_NAME);
-        if (storedKey) {
-          key = storedKey;
+        key = await AsyncStorage.getItem(ENCRYPTION_KEY_ASYNC);
+      }
+
+      if (!key) {
+        const legacy = await AsyncStorage.getItem(ENCRYPTION_KEY_LEGACY_ASYNC);
+        if (legacy) {
+          key = legacy;
+          await this.saveKey(key);
+          await AsyncStorage.removeItem(ENCRYPTION_KEY_LEGACY_ASYNC);
         }
       }
 
-      // 如果仍然没有密钥，生成新密钥并保存
       if (!key) {
-        key = this.generateKey();
+        key = await this.generateKeyAsync();
         await this.saveKey(key);
       }
 
       return key;
     } catch (error) {
       console.error('获取加密密钥失败:', error);
-      // 如果所有方法都失败，生成临时密钥（不持久化）
-      return this.generateKey();
+      return await this.generateKeyAsync();
     }
   }
 
@@ -63,23 +71,17 @@ export class KeyManager {
    * 保存加密密钥
    */
   static async saveKey(key) {
-    try {
-      // 优先使用安全存储
-      if (Platform.OS !== 'web') {
-        try {
-          await SecureStore.setItemAsync(ENCRYPTION_KEY_NAME, key);
-          return;
-        } catch (error) {
-          console.log('SecureStore保存失败，使用AsyncStorage:', error);
-        }
-      }
+    if (!key) throw new Error('加密密钥为空');
 
-      // 如果安全存储不可用，使用AsyncStorage
-      await AsyncStorage.setItem(ENCRYPTION_KEY_NAME, key);
-    } catch (error) {
-      console.error('保存加密密钥失败:', error);
-      throw error;
+    if (Platform.OS !== 'web') {
+      try {
+        await SecureStore.setItemAsync(ENCRYPTION_KEY_SECURE, key);
+      } catch (error) {
+        console.log('SecureStore 保存失败，仅使用 AsyncStorage:', error?.message || error);
+      }
     }
+
+    await AsyncStorage.setItem(ENCRYPTION_KEY_ASYNC, key);
   }
 
   /**
@@ -89,12 +91,15 @@ export class KeyManager {
     try {
       if (Platform.OS !== 'web') {
         try {
-          await SecureStore.deleteItemAsync(ENCRYPTION_KEY_NAME);
+          await SecureStore.deleteItemAsync(ENCRYPTION_KEY_SECURE);
         } catch (error) {
-          console.log('SecureStore删除失败:', error);
+          console.log('SecureStore 删除失败:', error?.message || error);
         }
       }
-      await AsyncStorage.removeItem(ENCRYPTION_KEY_NAME);
+      await AsyncStorage.multiRemove([
+        ENCRYPTION_KEY_ASYNC,
+        ENCRYPTION_KEY_LEGACY_ASYNC,
+      ]);
     } catch (error) {
       console.error('删除加密密钥失败:', error);
     }
@@ -107,17 +112,18 @@ export class KeyManager {
     try {
       if (Platform.OS !== 'web') {
         try {
-          const key = await SecureStore.getItemAsync(ENCRYPTION_KEY_NAME);
-          if (key) return true;
-        } catch (error) {
-          // 忽略错误，继续检查AsyncStorage
+          const k = await SecureStore.getItemAsync(ENCRYPTION_KEY_SECURE);
+          if (k) return true;
+        } catch {
+          // ignore
         }
       }
-      const key = await AsyncStorage.getItem(ENCRYPTION_KEY_NAME);
-      return key !== null;
+      const a = await AsyncStorage.getItem(ENCRYPTION_KEY_ASYNC);
+      if (a) return true;
+      const legacy = await AsyncStorage.getItem(ENCRYPTION_KEY_LEGACY_ASYNC);
+      return legacy !== null;
     } catch (error) {
       return false;
     }
   }
 }
-

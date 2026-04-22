@@ -595,7 +595,7 @@ export default function MedicineScreen() {
   };
 
   // 提醒设置表单主体（用于 Web/移动端不同滚动容器复用）
-  const ReminderSettingsForm = () => (
+  const reminderSettingsForm = (
     <>
       <View style={styles.switchRow}>
         <Text>启用提醒</Text>
@@ -962,22 +962,37 @@ export default function MedicineScreen() {
   };
 
   const deleteMedicine = async (id) => {
-    Alert.alert(
-      '确认删除',
-      '确定要删除这个药品吗？',
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: async () => {
-            await MedicineService.deleteMedicine(id);
-            await MedicineService.cancelReminders(id);
-            loadMedicines();
+    const doDelete = async () => {
+      try {
+        await MedicineService.deleteMedicine(id);
+        await MedicineService.cancelReminders(id);
+        loadMedicines();
+      } catch (error) {
+        console.error('删除药品失败:', error);
+        Alert.alert('错误', '删除失败，请重试');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      // Web 端 Alert.alert 不支持自定义按钮回调，使用 window.confirm
+      const confirmed = window.confirm('确定要删除这个药品吗？');
+      if (confirmed) {
+        await doDelete();
+      }
+    } else {
+      Alert.alert(
+        '确认删除',
+        '确定要删除这个药品吗？',
+        [
+          { text: '取消', style: 'cancel' },
+          {
+            text: '删除',
+            style: 'destructive',
+            onPress: doDelete,
           },
-        },
-      ]
-    );
+        ]
+      );
+    }
   };
 
   const exportMedicines = async () => {
@@ -1170,27 +1185,6 @@ export default function MedicineScreen() {
       />
 
       <Portal>
-        {/* 选择图片来源对话框 */}
-        <Dialog visible={sourceDialogVisible} onDismiss={() => setSourceDialogVisible(false)}>
-          <Dialog.Title>选择图片来源</Dialog.Title>
-          <Dialog.Content>
-            <Paragraph style={styles.dialogText}>
-              当前已选择 {selectedImages.length}/9 张图片
-            </Paragraph>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setSourceDialogVisible(false)}>取消</Button>
-            {Platform.OS !== 'web' && (
-              <Button onPress={selectFromCamera} icon="camera" mode="contained">
-                相机拍摄
-              </Button>
-            )}
-            <Button onPress={selectFromGallery} icon="image" mode="contained">
-              相册选择
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-
         {/* 确认药品信息对话框 */}
         <Dialog 
           visible={dialogVisible} 
@@ -1351,6 +1345,27 @@ export default function MedicineScreen() {
               disabled={!((recognitionResult && recognitionResult.name) || (manualEntryMode && manualName))}
             >
               {editingMedicine ? '更新' : '保存'}
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
+
+        {/* 选择图片来源对话框（需在编辑对话框之后渲染，确保显示在最顶层） */}
+        <Dialog visible={sourceDialogVisible} onDismiss={() => setSourceDialogVisible(false)}>
+          <Dialog.Title>选择图片来源</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph style={styles.dialogText}>
+              当前已选择 {selectedImages.length}/9 张图片
+            </Paragraph>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setSourceDialogVisible(false)}>取消</Button>
+            {Platform.OS !== 'web' && (
+              <Button onPress={selectFromCamera} icon="camera" mode="contained">
+                相机拍摄
+              </Button>
+            )}
+            <Button onPress={selectFromGallery} icon="image" mode="contained">
+              相册选择
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -1573,11 +1588,11 @@ export default function MedicineScreen() {
           >
             {Platform.OS === 'web' ? (
               <View>
-                <ReminderSettingsForm />
+                {reminderSettingsForm}
               </View>
             ) : (
               <ScrollView style={{ maxHeight: 500 }} showsVerticalScrollIndicator={false}>
-                <ReminderSettingsForm />
+                {reminderSettingsForm}
               </ScrollView>
             )}
           </Dialog.Content>

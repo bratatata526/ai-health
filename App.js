@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Image, View, StyleSheet, TouchableOpacity } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -16,6 +16,7 @@ import ReportScreen from './src/screens/ReportScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import AIScreen from './src/screens/AIScreen';
 import AIIcon from './src/components/AIIcon';
+import FloatingAIAssistant from './src/components/FloatingAIAssistant';
 import { theme } from './src/theme';
 import {
   MedicineService,
@@ -203,6 +204,7 @@ export default function App() {
         ) : !authed ? (
           <AuthScreen onAuthed={async () => setAuthed(await AuthService.isLoggedIn())} />
         ) : (
+          <View style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
           <Tab.Navigator
             screenOptions={({ route }) => ({
               tabBarIcon: ({ focused, color, size }) => {
@@ -253,6 +255,36 @@ export default function App() {
             <Tab.Screen name="AI助手" component={AIScreen} />
             <Tab.Screen name="报告" component={ReportScreen} />
           </Tab.Navigator>
+          <FloatingAIAssistant
+            onNavigate={(target) => {
+              if (navigationRef.isReady()) {
+                navigationRef.navigate(target);
+              }
+            }}
+            getPendingMedicines={async () => {
+              try {
+                const allMeds = await MedicineService.getAllMedicines();
+                const pending = [];
+                for (const med of allMeds) {
+                  const todayReminders = await MedicineService.getTodayReminders(med.id);
+                  const notTaken = todayReminders.filter(
+                    (r) => r.status === 'scheduled' || r.status === 'snoozed'
+                  );
+                  for (const r of notTaken) {
+                    const d = new Date(r.scheduledAt);
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    pending.push({ name: med.name, time: `${hh}:${mm}` });
+                  }
+                }
+                return pending;
+              } catch (e) {
+                console.warn('获取待服药品失败:', e);
+                return [];
+              }
+            }}
+          />
+          </View>
         )}
       </NavigationContainer>
     </PaperProvider>
