@@ -11,6 +11,7 @@ import {
 import { Text } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import DoctorAvatar from './DoctorAvatar';
+import { subscribeHeartRateAlerts } from '../services/HeartRateAlertService';
 
 const ICON_SIZE = 56;
 const BUBBLE_WIDTH = 260;
@@ -106,6 +107,15 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
     ]).start();
     bubbleTimerRef.current = setTimeout(() => hideBubble(), duration);
   }, []);
+
+  useEffect(() => {
+    const unsub = subscribeHeartRateAlerts((payload) => {
+      if (payload?.bubbleText) {
+        showBubbleWithContent(payload.bubbleText, 12000);
+      }
+    });
+    return unsub;
+  }, [showBubbleWithContent]);
 
   const hideBubble = useCallback(() => {
     if (bubbleTimerRef.current) clearTimeout(bubbleTimerRef.current);

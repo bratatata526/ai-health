@@ -48,8 +48,14 @@ export class ReportService {
       const avgSleep =
         filteredSleep.length > 0
           ? (
-              filteredSleep.reduce((sum, item) => sum + parseFloat(item.value), 0) /
-              filteredSleep.length
+              filteredSleep.reduce(
+                (sum, item) =>
+                  sum +
+                  parseFloat(
+                    item.totalHours != null ? item.totalHours : item.value != null ? item.value : 0
+                  ),
+                0
+              ) / filteredSleep.length
             ).toFixed(1)
           : 0;
 
@@ -213,7 +219,13 @@ export class ReportService {
           : 0
       );
 
-      sleepData.push(daySleep ? parseFloat(daySleep.value) : 0);
+      sleepData.push(
+        daySleep
+          ? parseFloat(
+              daySleep.totalHours != null ? daySleep.totalHours : daySleep.value != null ? daySleep.value : 0
+            )
+          : 0
+      );
     }
 
       return {

@@ -3,6 +3,52 @@ import { SecureStorage } from '../utils/secureStorage';
 const DEVICES_KEY = '@devices';
 const HEALTH_DATA_KEY = '@health_data';
 
+function migrateSleepEntry(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const date = raw.date;
+  if (!date) return null;
+  let total = raw.totalHours != null ? Number(raw.totalHours) : NaN;
+  if (!Number.isFinite(total)) total = Number(raw.value);
+  if (!Number.isFinite(total)) total = 0;
+
+  let deep = raw.deepHours != null ? Number(raw.deepHours) : NaN;
+  let light = raw.lightHours != null ? Number(raw.lightHours) : NaN;
+  let rem = raw.remHours != null ? Number(raw.remHours) : NaN;
+  let awake = raw.awakeHours != null ? Number(raw.awakeHours) : NaN;
+
+  if (!Number.isFinite(deep)) {
+    deep = Math.round(total * 0.26 * 10) / 10;
+    light = Math.round(total * 0.48 * 10) / 10;
+    rem = Math.round(total * 0.18 * 10) / 10;
+    awake = Math.round((total - deep - light - rem) * 10) / 10;
+    if (awake < 0) awake = 0;
+  } else {
+    if (!Number.isFinite(light)) light = Math.max(0, total - deep - (rem || 0) - (awake || 0));
+    if (!Number.isFinite(rem)) rem = Math.max(0, total - deep - light - (awake || 0));
+    if (!Number.isFinite(awake)) awake = Math.max(0, total - deep - light - rem);
+  }
+
+  return {
+    date,
+    totalHours: Math.round(total * 10) / 10,
+    deepHours: Math.round(deep * 10) / 10,
+    lightHours: Math.round(light * 10) / 10,
+    remHours: Math.round(rem * 10) / 10,
+    awakeHours: Math.round(awake * 10) / 10,
+  };
+}
+
+function migrateHealthPayload(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { heartRate: [], bloodGlucose: [], sleep: [] };
+  }
+  const heartRate = Array.isArray(data.heartRate) ? data.heartRate : [];
+  const bloodGlucose = Array.isArray(data.bloodGlucose) ? data.bloodGlucose : [];
+  const sleepRaw = Array.isArray(data.sleep) ? data.sleep : [];
+  const sleep = sleepRaw.map(migrateSleepEntry).filter(Boolean);
+  return { heartRate, bloodGlucose, sleep };
+}
+
 export class DeviceService {
   static async getConnectedDevices() {
     try {
@@ -59,9 +105,9 @@ export class DeviceService {
       const data = await SecureStorage.getItem(HEALTH_DATA_KEY);
       if (data && typeof data === 'object' && !Array.isArray(data)
           && Array.isArray(data.heartRate)) {
-        return data;
+        return migrateHealthPayload(data);
       }
-      
+
       // 数据格式异常或不存在，生成模拟数据
       return this.generateMockData();
     } catch (error) {
@@ -72,17 +118,28 @@ export class DeviceService {
 
   static async updateHealthData(newData) {
     try {
-      const existingData = await this.getHealthData();
-      
-      // 合并新数据
+      const existingData = migrateHealthPayload(await this.getHealthDataForStorage());
+
       existingData.heartRate.push(...(newData.heartRate || []));
       existingData.bloodGlucose.push(...(newData.bloodGlucose || []));
-      existingData.sleep.push(...(newData.sleep || []));
-      
+
+      const incomingSleep = (newData.sleep || []).map(migrateSleepEntry).filter(Boolean);
+      incomingSleep.forEach((s) => {
+        const key = new Date(s.date).toDateString();
+        const idx = existingData.sleep.findIndex(
+          (x) => new Date(x.date).toDateString() === key
+        );
+        if (idx >= 0) {
+          existingData.sleep[idx] = { ...existingData.sleep[idx], ...s };
+        } else {
+          existingData.sleep.push(s);
+        }
+      });
+
       // 只保留最近30天的数据
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      
+
       existingData.heartRate = existingData.heartRate.filter(
         (item) => new Date(item.date) >= thirtyDaysAgo
       );
@@ -92,12 +149,27 @@ export class DeviceService {
       existingData.sleep = existingData.sleep.filter(
         (item) => new Date(item.date) >= thirtyDaysAgo
       );
-      
+
       await SecureStorage.setItem(HEALTH_DATA_KEY, existingData);
-      return existingData;
+      return migrateHealthPayload(existingData);
     } catch (error) {
       console.error('更新健康数据失败:', error);
       throw error;
+    }
+  }
+
+  /** 读取存储中的原始数据（不返回未持久化的模拟数据） */
+  static async getHealthDataForStorage() {
+    try {
+      const data = await SecureStorage.getItem(HEALTH_DATA_KEY);
+      if (data && typeof data === 'object' && !Array.isArray(data)
+          && Array.isArray(data.heartRate)) {
+        return data;
+      }
+      return { heartRate: [], bloodGlucose: [], sleep: [] };
+    } catch (error) {
+      console.error('读取健康存储失败:', error);
+      return { heartRate: [], bloodGlucose: [], sleep: [] };
     }
   }
 
@@ -108,39 +180,54 @@ export class DeviceService {
       sleep: [],
     };
 
-    // 生成最近7天的模拟数据
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      
-      // 心率数据（每分钟3-5次）
-      for (let j = 0; j < 5; j++) {
-        const time = new Date(date);
-        time.setHours(8 + j * 3, Math.floor(Math.random() * 60), 0);
-        data.heartRate.push({
-          date: time.toISOString(),
-          value: Math.floor(Math.random() * 30) + 65, // 65-95 bpm
-        });
+      date.setHours(0, 0, 0, 0);
+
+      // 心率：每小时 1～3 条，便于 24 根细柱展示全天
+      for (let h = 0; h < 24; h++) {
+        const n = 1 + Math.floor(Math.random() * 3);
+        for (let k = 0; k < n; k++) {
+          const t = new Date(date);
+          t.setHours(h, Math.floor(Math.random() * 58), Math.floor(Math.random() * 59), 0);
+          const base = 66 + (h / 24) * 8 + (Math.random() * 16 - 5);
+          data.heartRate.push({
+            date: t.toISOString(),
+            value: Math.max(48, Math.min(135, Math.round(base))),
+          });
+        }
       }
 
-      // 血糖数据（每天2-3次）
-      for (let j = 0; j < 3; j++) {
-        const time = new Date(date);
-        time.setHours(7 + j * 6, Math.floor(Math.random() * 60), 0);
+      // 血糖：每小时约一条（略随机跳过若干小时更真实）
+      for (let h = 0; h < 24; h++) {
+        if (Math.random() < 0.12) continue;
+        const t = new Date(date);
+        t.setHours(h, 5 + Math.floor(Math.random() * 45), 0, 0);
+        const v = 4.3 + Math.sin((h / 24) * Math.PI) * 0.6 + Math.random() * 2.2 + (h >= 17 ? 0.35 : 0);
         data.bloodGlucose.push({
-          date: time.toISOString(),
-          value: (Math.random() * 2 + 4).toFixed(1), // 4.0-6.0 mmol/L
+          date: t.toISOString(),
+          value: Math.round(Math.min(9.5, Math.max(3.5, v)) * 10) / 10,
         });
       }
 
-      // 睡眠数据（每天1次）
+      // 睡眠：每晚一条，含深睡/浅睡/REM/清醒
+      const total = Math.round((6.2 + Math.random() * 1.6) * 10) / 10;
+      const deep = Math.round(total * (0.22 + Math.random() * 0.08) * 10) / 10;
+      const rem = Math.round(total * (0.16 + Math.random() * 0.06) * 10) / 10;
+      const awake = Math.round((0.3 + Math.random() * 0.5) * 10) / 10;
+      const light = Math.round((total - deep - rem - awake) * 10) / 10;
       data.sleep.push({
         date: date.toISOString(),
-        value: (Math.random() * 2 + 6).toFixed(1), // 6.0-8.0 小时
+        totalHours: total,
+        deepHours: deep,
+        lightHours: Math.max(0, light),
+        remHours: rem,
+        awakeHours: awake,
       });
     }
 
-    return data;
+    return migrateHealthPayload(data);
   }
 
   // 模拟实时数据更新
@@ -170,16 +257,25 @@ export class DeviceService {
         if (now.getHours() >= 22 || now.getHours() < 6) {
           const today = new Date(now);
           today.setHours(0, 0, 0, 0);
+          const total = Math.round((6.2 + Math.random() * 1.6) * 10) / 10;
+          const deep = Math.round(total * 0.25 * 10) / 10;
+          const rem = Math.round(total * 0.18 * 10) / 10;
+          const awake = 0.4;
+          const light = Math.round((total - deep - rem - awake) * 10) / 10;
           newData.sleep.push({
             date: today.toISOString(),
-            value: (Math.random() * 2 + 6).toFixed(1),
+            totalHours: total,
+            deepHours: deep,
+            lightHours: Math.max(0, light),
+            remHours: rem,
+            awakeHours: awake,
           });
         }
       } else if (device.type === 'glucometer') {
         // 血糖仪数据
         newData.bloodGlucose.push({
           date: now.toISOString(),
-          value: (Math.random() * 2 + 4).toFixed(1),
+          value: Math.round((Math.random() * 2 + 4) * 10) / 10,
         });
       }
 

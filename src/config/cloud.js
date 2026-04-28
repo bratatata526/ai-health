@@ -12,7 +12,7 @@ export const CLOUD_CONFIG = {
   BASE_URL:
     process.env.EXPO_PUBLIC_CLOUD_API_BASE_URL ||
     extraBaseUrl ||
-    'http://localhost:4000',
+    'http://192.168.3.5:4000',
 };
 
 

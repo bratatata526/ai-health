@@ -75,7 +75,18 @@ export class ExportService {
       // 导出睡眠数据
       healthData.sleep.forEach(item => {
         const date = new Date(item.date);
-        csvContent += `${date.toLocaleDateString('zh-CN')},${date.toLocaleTimeString('zh-CN')},睡眠,${item.value},小时\n`;
+        const total = item.totalHours != null ? item.totalHours : item.value;
+        const deep = item.deepHours != null ? item.deepHours : '';
+        const light = item.lightHours != null ? item.lightHours : '';
+        const rem = item.remHours != null ? item.remHours : '';
+        const awake = item.awakeHours != null ? item.awakeHours : '';
+        csvContent += `${date.toLocaleDateString('zh-CN')},${date.toLocaleTimeString('zh-CN')},睡眠总时长,${total},小时\n`;
+        if (deep !== '') {
+          csvContent += `${date.toLocaleDateString('zh-CN')},${date.toLocaleTimeString('zh-CN')},深睡,${deep},小时\n`;
+          csvContent += `${date.toLocaleDateString('zh-CN')},${date.toLocaleTimeString('zh-CN')},浅睡,${light},小时\n`;
+          csvContent += `${date.toLocaleDateString('zh-CN')},${date.toLocaleTimeString('zh-CN')},REM,${rem},小时\n`;
+          csvContent += `${date.toLocaleDateString('zh-CN')},${date.toLocaleTimeString('zh-CN')},清醒,${awake},小时\n`;
+        }
       });
       
       return csvContent;

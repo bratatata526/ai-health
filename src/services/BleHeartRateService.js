@@ -21,17 +21,45 @@ function _isBenignMonitorError(error) {
 
 class BleHeartRateService {
   constructor() {
-    if (Platform.OS === 'web') {
-      this.manager = null;
-    } else {
-      const { BleManager } = require('react-native-ble-plx');
-      this.manager = new BleManager();
-    }
+    this.manager = null;
+    /** 已确认当前环境无原生 BLE（避免反复 require / 抛错） */
+    this._bleUnavailable = false;
     this.scanTimer = null;
     this.connectedDevice = null;
     this.heartRateSubscription = null;
     /** 主动 teardown 时监控回调仍会收到 cancel，用于降噪日志 */
     this._endingHeartRateMonitor = false;
+  }
+
+  /**
+   * 延迟到首次使用再 new BleManager：避免 DeviceScreen 导入时 NativeModules 未就绪；
+   * 同时 Expo Go 无 BlePlx 时根本不会加载 react-native-ble-plx。
+   */
+  _ensureManager() {
+    if (Platform.OS === 'web') return false;
+    if (this.manager) return true;
+    if (this._bleUnavailable) return false;
+
+    const { NativeModules } = require('react-native');
+    const ble = NativeModules.BlePlx;
+    if (!ble || typeof ble.createClient !== 'function') {
+      this._bleUnavailable = true;
+      console.warn(
+        '[BleHeartRateService] 原生蓝牙模块不可用（常见于 Expo Go）。请使用 expo run:android / run:ios 构建含 BLE 的客户端。'
+      );
+      return false;
+    }
+
+    try {
+      const { BleManager } = require('react-native-ble-plx');
+      this.manager = new BleManager();
+      return true;
+    } catch (e) {
+      console.warn('[BleHeartRateService] 初始化 BleManager 失败:', e?.message || e);
+      this._bleUnavailable = true;
+      this.manager = null;
+      return false;
+    }
   }
 
   async requestPermissions() {
@@ -55,9 +83,14 @@ class BleHeartRateService {
     return fineLocation === PermissionsAndroid.RESULTS.GRANTED;
   }
 
+  _nativeBleUnavailableMessage() {
+    if (Platform.OS === 'web') return 'Web 环境不支持蓝牙';
+    return '当前客户端未包含蓝牙原生模块（例如使用 Expo Go 时）。请使用 npx expo run:android 或 npx expo run:ios 安装含手环功能的版本。';
+  }
+
   scanHeartRateDevices(onDeviceFound, onError, timeoutMs = 12000) {
-    if (!this.manager) {
-      if (onError) onError(new Error('Web 环境不支持蓝牙扫描'));
+    if (!this._ensureManager()) {
+      if (onError) onError(new Error(this._nativeBleUnavailableMessage()));
       return;
     }
     this.stopScan();
@@ -113,8 +146,8 @@ class BleHeartRateService {
   }
 
   async connectAndMonitorHeartRate(deviceId, onHeartRate) {
-    if (!this.manager) {
-      throw new Error('Web 环境不支持蓝牙连接');
+    if (!this._ensureManager()) {
+      throw new Error(this._nativeBleUnavailableMessage());
     }
     this.stopScan();
     await this.disconnectCurrentDevice();
@@ -170,7 +203,9 @@ class BleHeartRateService {
         const device = this.connectedDevice;
         this.connectedDevice = null;
         try {
-          await this.manager.cancelDeviceConnection(device.id);
+          if (this.manager) {
+            await this.manager.cancelDeviceConnection(device.id);
+          }
         } catch {
           // ignore disconnect error
         }

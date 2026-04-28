@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Fragment } from 'react';
 import {
   View,
   StyleSheet,
@@ -7,6 +7,7 @@ import {
   Dimensions,
   Platform,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import {
   Card,
@@ -14,18 +15,88 @@ import {
   Paragraph,
   Button,
   Text,
-  ProgressBar,
   Chip,
+  SegmentedButtons,
+  Snackbar,
 } from 'react-native-paper';
-import { LineChart } from 'react-native-chart-kit';
+import { LineChart, BarChart } from 'react-native-chart-kit';
+import Svg, { Line } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme';
 import { DeviceService } from '../services/DeviceService';
 import { ExportService } from '../services/ExportService';
 import { Alert } from 'react-native';
 import { bleHeartRateService } from '../services/BleHeartRateService';
+import { heartRateAlertMonitor } from '../services/HeartRateAlertService';
+import {
+  buildDayHourlyAverage,
+  buildRollingDailyAverage,
+  hasNonZero,
+  hourlyLineChartLabels,
+  paddedYRange,
+  lineChartBoundedDatasets,
+} from '../utils/healthCharts';
 
 const { width } = Dimensions.get('window');
+
+/** 周柱图透明点击层：由 X 估算柱索引（与 chart-kit BarChart 布局一致） */
+function barIndexFromTouch(locationX, nBars, chartWidth, paddingRight, barPercentage) {
+  if (nBars <= 0) return -1;
+  const inner = chartWidth - paddingRight;
+  const barW = 32 * barPercentage;
+  const i = Math.round(((locationX - paddingRight - barW / 2) * nBars) / inner);
+  return Math.max(0, Math.min(nBars - 1, i));
+}
+
+/** 睡眠图背景网格：与 react-native-chart-kit 相同 strokeDasharray，刻度与柱高共用 trackH 比例 */
+function SleepDashedGrid({ height, bottomInset, stroke, nDays }) {
+  const [w, setW] = useState(0);
+  return (
+    <View
+      pointerEvents="none"
+      style={[styles.sleepGridPlane, { height, bottom: bottomInset }]}
+      onLayout={(e) => setW(Math.round(e.nativeEvent.layout.width))}
+    >
+      {w > 0 ? (
+        <Svg width={w} height={height} style={StyleSheet.absoluteFillObject}>
+          {[0, 1, 2, 3, 4].map((i) => {
+            const y = height - (height * i) / 4;
+            return (
+              <Line
+                key={`h${i}`}
+                x1={0}
+                y1={y}
+                x2={w}
+                y2={y}
+                stroke={stroke}
+                strokeWidth={1}
+                strokeDasharray="5, 10"
+              />
+            );
+          })}
+          {nDays > 1
+            ? Array.from({ length: nDays - 1 }, (_, idx) => {
+                const vi = idx + 1;
+                const x = (w * vi) / nDays;
+                return (
+                  <Line
+                    key={`v${vi}`}
+                    x1={x}
+                    y1={0}
+                    x2={x}
+                    y2={height}
+                    stroke={stroke}
+                    strokeWidth={1}
+                    strokeDasharray="5, 10"
+                  />
+                );
+              })
+            : null}
+        </Svg>
+      ) : null}
+    </View>
+  );
+}
 
 export default function DeviceScreen() {
   const [devices, setDevices] = useState([]);
@@ -46,11 +117,16 @@ export default function DeviceScreen() {
   });
 
   const [loadError, setLoadError] = useState(null);
+  /** 心率 / 血糖图表：日 = 当日每 3 小时均值；周 = 近 7 天每日均值 */
+  const [hrRange, setHrRange] = useState('day');
+  const [glucoseRange, setGlucoseRange] = useState('day');
+  const [chartSnackbar, setChartSnackbar] = useState({ visible: false, message: '' });
 
   useEffect(() => {
     loadData();
     return () => {
       try {
+        heartRateAlertMonitor.reset();
         bleHeartRateService.stopScan();
         bleHeartRateService.disconnectCurrentDevice();
       } catch (e) {
@@ -91,17 +167,40 @@ export default function DeviceScreen() {
       if (todayData.length > 0) {
         const avgHeartRate = todayData.reduce((sum, item) => sum + Number(item.value || 0), 0) / todayData.length;
         const latestGlucose = data.bloodGlucose[data.bloodGlucose.length - 1]?.value || 0;
-        const latestSleep = data.sleep[data.sleep.length - 1]?.value || 0;
+        const lastSleep = data.sleep[data.sleep.length - 1];
+        const latestSleep = lastSleep
+          ? Number(lastSleep.totalHours != null ? lastSleep.totalHours : lastSleep.value || 0)
+          : 0;
 
         setTodayStats({
           heartRate: Math.round(avgHeartRate),
           bloodGlucose: latestGlucose,
-          sleep: latestSleep,
+          sleep: typeof latestSleep === 'number' ? latestSleep : parseFloat(latestSleep) || 0,
         });
       }
     } catch (error) {
       console.error('加载设备数据失败:', error);
       setLoadError('数据加载失败，请下拉刷新重试');
+    }
+  };
+
+  /** 蓝牙与开发自测共用：更新 UI、触发告警、写入趋势 */
+  const applyLiveHeartRate = async (bpm) => {
+    try {
+      setLiveHeartRate(bpm);
+      const hrAlert = heartRateAlertMonitor.checkAndNotify(bpm);
+      if (hrAlert) {
+        Alert.alert(hrAlert.title, hrAlert.body);
+      }
+      await DeviceService.updateHealthData({
+        heartRate: [{ date: new Date().toISOString(), value: bpm }],
+        bloodGlucose: [],
+        sleep: [],
+      });
+      await loadData();
+    } catch (error) {
+      console.error('应用实时心率失败:', error);
+      Alert.alert('错误', error?.message || '处理心率数据失败');
     }
   };
 
@@ -173,14 +272,8 @@ export default function DeviceScreen() {
       setConnectingDeviceId(device.id);
       const connectedDevice = await bleHeartRateService.connectAndMonitorHeartRate(
         device.id,
-        async (bpm) => {
-          setLiveHeartRate(bpm);
-          await DeviceService.updateHealthData({
-            heartRate: [{ date: new Date().toISOString(), value: bpm }],
-            bloodGlucose: [],
-            sleep: [],
-          });
-          await loadData();
+        (bpm) => {
+          applyLiveHeartRate(bpm);
         }
       );
 
@@ -203,6 +296,7 @@ export default function DeviceScreen() {
 
   const disconnectHeartRateDevice = async (deviceId) => {
     try {
+      heartRateAlertMonitor.reset();
       await bleHeartRateService.disconnectCurrentDevice();
       await DeviceService.removeDevice(deviceId);
       setLiveHeartRate(null);
@@ -223,42 +317,35 @@ export default function DeviceScreen() {
     style: {
       borderRadius: 16,
     },
+    propsForLabels: {
+      fontSize: 10,
+    },
   };
 
-  const prepareChartData = (data, label) => {
-    // 按天聚合：同一天的多条记录取平均值
-    const dailyMap = {};
-    data.forEach((item) => {
-      const d = new Date(item.date);
-      const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-      if (!dailyMap[key]) {
-        dailyMap[key] = { sum: 0, count: 0, month: d.getMonth() + 1, day: d.getDate() };
-      }
-      dailyMap[key].sum += Number(item.value);
-      dailyMap[key].count += 1;
-    });
+  const chartConfigGlucose = {
+    ...chartConfig,
+    decimalPlaces: 1,
+    color: (opacity = 1) => `rgba(46, 125, 50, ${opacity})`,
+  };
 
-    // 按日期排序后取最近 7 天
-    const sortedDays = Object.keys(dailyMap).sort((a, b) => {
-      const [ay, am, ad] = a.split('-').map(Number);
-      const [by, bm, bd] = b.split('-').map(Number);
-      return new Date(ay, am - 1, ad) - new Date(by, bm - 1, bd);
-    }).slice(-7);
+  /** 周视图柱形（约 7 根，略宽柱更协调） */
+  const chartConfigWeekBarHr = {
+    ...chartConfig,
+    barPercentage: 0.52,
+  };
+  const chartConfigWeekBarGlucose = {
+    ...chartConfigGlucose,
+    barPercentage: 0.52,
+  };
 
-    return {
-      labels: sortedDays.map((key) => `${dailyMap[key].month}/${dailyMap[key].day}`),
-      datasets: [
-        {
-          data: sortedDays.map((key) => {
-            const avg = dailyMap[key].sum / dailyMap[key].count;
-            return Math.round(avg * 10) / 10;
-          }),
-        },
-      ],
-    };
+  const chartWidth = Math.max(width - 64, 200);
+
+  const showChartMessage = (message) => {
+    setChartSnackbar({ visible: true, message });
   };
 
   return (
+    <Fragment>
     <ScrollView
       style={styles.container}
       refreshControl={
@@ -284,6 +371,13 @@ export default function DeviceScreen() {
                 <Ionicons name="heart" size={32} color={theme.colors.error} />
                 <Text style={styles.statValue}>{liveHeartRate || todayStats.heartRate}</Text>
                 <Text style={styles.statLabel}>心率 (bpm)</Text>
+                {liveHeartRate != null && (
+                  <Text style={styles.hrMonitorHint}>
+                    异常提示：&lt;{heartRateAlertMonitor.lowBpm} 或 &gt;{heartRateAlertMonitor.highBpm}{' '}
+                    bpm（静息参考，约 {Math.round(heartRateAlertMonitor.cooldownMs / 1000)}s
+                    内同类仅提醒一次）
+                  </Text>
+                )}
               </View>
               <View style={styles.statItem}>
                 <Ionicons name="water" size={32} color={theme.colors.secondary} />
@@ -292,7 +386,11 @@ export default function DeviceScreen() {
               </View>
               <View style={styles.statItem}>
                 <Ionicons name="moon" size={32} color={theme.colors.accent} />
-                <Text style={styles.statValue}>{todayStats.sleep}</Text>
+                <Text style={styles.statValue}>
+                  {typeof todayStats.sleep === 'number'
+                    ? todayStats.sleep.toFixed(1)
+                    : todayStats.sleep}
+                </Text>
                 <Text style={styles.statLabel}>睡眠 (小时)</Text>
               </View>
             </View>
@@ -396,23 +494,99 @@ export default function DeviceScreen() {
           </Card.Content>
         </Card>
 
-        {/* 心率图表 */}
+        {/* 心率：日折线（每小时均） / 周柱形（日均） */}
         {healthData.heartRate.length > 0 && (() => {
           try {
-            const chartData = prepareChartData(healthData.heartRate, '心率');
-            if (!chartData || !chartData.datasets?.[0]?.data?.length) return null;
+            const dayHr = buildDayHourlyAverage(healthData.heartRate, new Date());
+            const weekHr = buildRollingDailyAverage(healthData.heartRate, 7);
+            const useDay = hrRange === 'day';
+            const values = useDay ? dayHr.data : weekHr.data;
+            const labels = useDay ? hourlyLineChartLabels() : weekHr.labels;
+            if (!hasNonZero(values)) return null;
+            const hrPad = paddedYRange(values.filter((v) => Number(v) > 0), {
+              absoluteMinPad: 2,
+              padRatio: 0.1,
+              hardMin: 40,
+            });
+            const lineDisplay = useDay
+              ? values.map((v) => (Number(v) > 0 ? Number(v) : hrPad.yMin))
+              : values;
+            const chartData = useDay
+              ? {
+                  labels,
+                  datasets: lineChartBoundedDatasets(lineDisplay, hrPad.yMin, hrPad.yMax),
+                }
+              : { labels, datasets: [{ data: values }] };
             return (
               <Card style={styles.card}>
                 <Card.Content>
                   <Title style={styles.sectionTitle}>心率趋势</Title>
-                  <LineChart
-                    data={chartData}
-                    width={Math.max(width - 64, 200)}
-                    height={220}
-                    chartConfig={chartConfig}
-                    bezier
-                    style={styles.chart}
+                  <Paragraph style={styles.chartHint}>
+                    日视图：折线为当日 0–23 点每小时平均心率。周视图：柱高为近 7 个日历日日均心率 (bpm)。点击数据点或柱子查看数值。
+                  </Paragraph>
+                  <SegmentedButtons
+                    value={hrRange}
+                    onValueChange={setHrRange}
+                    buttons={[
+                      { value: 'day', label: '日心率' },
+                      { value: 'week', label: '周心率' },
+                    ]}
+                    style={styles.segmented}
                   />
+                  {useDay ? (
+                    <LineChart
+                      data={chartData}
+                      width={chartWidth}
+                      height={220}
+                      chartConfig={chartConfig}
+                      bezier
+                      fromZero={false}
+                      withShadow={false}
+                      segments={4}
+                      style={styles.chart}
+                      onDataPointClick={({ index, value }) => {
+                        const v = Number(value);
+                        const raw = dayHr.data[index];
+                        const msg =
+                          Number(raw) > 0
+                            ? `${index}时 平均心率 ${Math.round(v)} bpm`
+                            : `${index}时 暂无采样`;
+                        showChartMessage(msg);
+                      }}
+                    />
+                  ) : (
+                    <View style={styles.barChartTouchWrap}>
+                      <BarChart
+                        data={chartData}
+                        width={chartWidth}
+                        height={220}
+                        chartConfig={chartConfigWeekBarHr}
+                        style={[styles.chart, styles.barChartWithPad, styles.barChartNoOuterMargin]}
+                        fromZero={false}
+                        showValuesOnTopOfBars={false}
+                        showBarTops
+                        yAxisSuffix=""
+                        segments={4}
+                      />
+                      <Pressable
+                        style={styles.barChartTouchOverlay}
+                        accessibilityLabel="查看心率柱形数值"
+                        onPress={(e) => {
+                          const idx = barIndexFromTouch(
+                            e.nativeEvent.locationX,
+                            values.length,
+                            chartWidth,
+                            64,
+                            chartConfigWeekBarHr.barPercentage ?? 0.52
+                          );
+                          const v = values[idx];
+                          showChartMessage(
+                            `${weekHr.labels[idx]} 日均心率 ${Math.round(v)} bpm`
+                          );
+                        }}
+                      />
+                    </View>
+                  )}
                 </Card.Content>
               </Card>
             );
@@ -422,23 +596,98 @@ export default function DeviceScreen() {
           }
         })()}
 
-        {/* 血糖图表 */}
+        {/* 血糖：日折线 / 周柱形 */}
         {healthData.bloodGlucose.length > 0 && (() => {
           try {
-            const chartData = prepareChartData(healthData.bloodGlucose, '血糖');
-            if (!chartData || !chartData.datasets?.[0]?.data?.length) return null;
+            const dayG = buildDayHourlyAverage(healthData.bloodGlucose, new Date());
+            const weekG = buildRollingDailyAverage(healthData.bloodGlucose, 7);
+            const useDay = glucoseRange === 'day';
+            const values = useDay ? dayG.data : weekG.data;
+            const labels = useDay ? hourlyLineChartLabels() : weekG.labels;
+            if (!hasNonZero(values)) return null;
+            const gPad = paddedYRange(values.filter((v) => Number(v) > 0), {
+              absoluteMinPad: 0.15,
+              padRatio: 0.12,
+            });
+            const lineDisplay = useDay
+              ? values.map((v) => (Number(v) > 0 ? Number(v) : gPad.yMin))
+              : values;
+            const chartData = useDay
+              ? {
+                  labels,
+                  datasets: lineChartBoundedDatasets(lineDisplay, gPad.yMin, gPad.yMax),
+                }
+              : { labels, datasets: [{ data: values }] };
             return (
               <Card style={styles.card}>
                 <Card.Content>
-                  <Title style={styles.sectionTitle}>血糖趋势</Title>
-                  <LineChart
-                    data={chartData}
-                    width={Math.max(width - 64, 200)}
-                    height={220}
-                    chartConfig={chartConfig}
-                    bezier
-                    style={styles.chart}
+                  <Title style={styles.sectionTitle}>血糖变化</Title>
+                  <Paragraph style={styles.chartHint}>
+                    日视图：折线为当日每小时平均血糖 (mmol/L)。周视图：柱高为近 7 天日均。点击数据点或柱子查看数值。
+                  </Paragraph>
+                  <SegmentedButtons
+                    value={glucoseRange}
+                    onValueChange={setGlucoseRange}
+                    buttons={[
+                      { value: 'day', label: '日血糖' },
+                      { value: 'week', label: '周血糖' },
+                    ]}
+                    style={styles.segmented}
                   />
+                  {useDay ? (
+                    <LineChart
+                      data={chartData}
+                      width={chartWidth}
+                      height={220}
+                      chartConfig={chartConfigGlucose}
+                      bezier
+                      fromZero={false}
+                      withShadow={false}
+                      segments={4}
+                      style={styles.chart}
+                      onDataPointClick={({ index, value }) => {
+                        const raw = dayG.data[index];
+                        const v = Number(raw);
+                        const msg =
+                          v > 0
+                            ? `${index}时 平均血糖 ${v.toFixed(1)} mmol/L`
+                            : `${index}时 暂无采样`;
+                        showChartMessage(msg);
+                      }}
+                    />
+                  ) : (
+                    <View style={styles.barChartTouchWrap}>
+                      <BarChart
+                        data={chartData}
+                        width={chartWidth}
+                        height={220}
+                        chartConfig={chartConfigWeekBarGlucose}
+                        style={[styles.chart, styles.barChartWithPad, styles.barChartNoOuterMargin]}
+                        fromZero={false}
+                        showValuesOnTopOfBars={false}
+                        showBarTops
+                        yAxisSuffix=""
+                        segments={4}
+                      />
+                      <Pressable
+                        style={styles.barChartTouchOverlay}
+                        accessibilityLabel="查看血糖柱形数值"
+                        onPress={(e) => {
+                          const idx = barIndexFromTouch(
+                            e.nativeEvent.locationX,
+                            values.length,
+                            chartWidth,
+                            64,
+                            chartConfigWeekBarGlucose.barPercentage ?? 0.52
+                          );
+                          const v = values[idx];
+                          showChartMessage(
+                            `${weekG.labels[idx]} 日均血糖 ${Number(v).toFixed(1)} mmol/L`
+                          );
+                        }}
+                      />
+                    </View>
+                  )}
                 </Card.Content>
               </Card>
             );
@@ -448,28 +697,178 @@ export default function DeviceScreen() {
           }
         })()}
 
-        {/* 睡眠图表 */}
+        {/* 睡眠：近 7 晚堆叠细柱（总高 = 总睡眠；自下而上：深睡→REM→浅睡→清醒） */}
         {healthData.sleep.length > 0 && (() => {
           try {
-            const chartData = prepareChartData(healthData.sleep, '睡眠');
-            if (!chartData || !chartData.datasets?.[0]?.data?.length) return null;
+            const sortedSleep = [...(healthData.sleep || [])]
+              .filter(Boolean)
+              .sort((a, b) => new Date(a.date) - new Date(b.date))
+              .slice(-7)
+              .filter(
+                (s) =>
+                  Number(s.totalHours != null ? s.totalHours : s.value || 0) > 0
+              );
+            if (!sortedSleep.length) return null;
+            const totalVals = sortedSleep.map((s) =>
+              Number(s.totalHours != null ? s.totalHours : s.value || 0)
+            );
+            const maxCap = Math.max(8, ...totalVals, 0.1);
+            const trackH = 128;
+            const barW = 12;
+            const sleepYTicks = [maxCap, (maxCap * 3) / 4, maxCap / 2, maxCap / 4, 0];
+
             return (
               <Card style={styles.card}>
                 <Card.Content>
-                  <Title style={styles.sectionTitle}>睡眠时长</Title>
-                  <LineChart
-                    data={chartData}
-                    width={Math.max(width - 64, 200)}
-                    height={220}
-                    chartConfig={chartConfig}
-                    bezier
-                    style={styles.chart}
-                  />
+                  <Title style={styles.sectionTitle}>睡眠</Title>
+                  <Paragraph style={styles.chartHint}>
+                    每根细柱高度表示当晚总睡眠；柱内自下而上为：深睡、REM、浅睡、清醒。点击彩色分段可查看阶段与时长。背景网格为虚线，与心率/血糖图一致。
+                  </Paragraph>
+                  <View style={styles.sleepChartWithAxis}>
+                    <View style={[styles.sleepYAxisWrap, { paddingBottom: 34 }]}>
+                      <Text style={styles.sleepYAxisCaption}>时长</Text>
+                      <View style={[styles.sleepYAxisTicks, { height: trackH }]}>
+                        {sleepYTicks.map((v, k) => {
+                          const yFromBottom = (trackH * (4 - k)) / 4;
+                          const label =
+                            v <= 0 ? '0' : Number(v).toFixed(1).replace(/\.0$/, '');
+                          const labelBottom =
+                            yFromBottom <= 0 ? 0 : yFromBottom - 5;
+                          return (
+                            <Text
+                              key={k}
+                              style={[
+                                styles.sleepYAxisLabel,
+                                { bottom: labelBottom },
+                              ]}
+                            >
+                              {label}
+                            </Text>
+                          );
+                        })}
+                      </View>
+                      <Text style={styles.sleepYAxisUnit}>(h)</Text>
+                    </View>
+                    <View style={styles.sleepBarsFlex}>
+                      <View style={[styles.sleepStackRow, styles.sleepStackRowGrid]}>
+                        <SleepDashedGrid
+                          height={trackH}
+                          bottomInset={34}
+                          stroke={chartConfig.color(0.2)}
+                          nDays={sortedSleep.length}
+                        />
+                        {sortedSleep.map((s) => {
+                          const total = Number(
+                            s.totalHours != null ? s.totalHours : s.value || 0
+                          );
+                          const deep = Math.max(0, Number(s.deepHours ?? 0));
+                          const rem = Math.max(0, Number(s.remHours ?? 0));
+                          const light = Math.max(0, Number(s.lightHours ?? 0));
+                          const awake = Math.max(0, Number(s.awakeHours ?? 0));
+                          const scale = trackH / maxCap;
+                          const H = Math.max(6, total * scale);
+                          const hAwake = Math.max(0, awake * scale);
+                          const hLight = Math.max(0, light * scale);
+                          const hRem = Math.max(0, rem * scale);
+                          const hDeep = Math.max(0, deep * scale);
+                          const d = new Date(s.date);
+                          const dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+                          return (
+                            <View key={s.date} style={styles.sleepStackCell}>
+                              <View style={[styles.sleepStackTrack, { height: trackH }]}>
+                                <View
+                                  style={[
+                                    styles.sleepStackBarInner,
+                                    { height: H, width: barW },
+                                  ]}
+                                >
+                                  <View
+                                    style={{
+                                      height: H,
+                                      width: barW,
+                                      flexDirection: 'column-reverse',
+                                      borderRadius: 5,
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    {hDeep > 0.25 ? (
+                                      <Pressable
+                                        accessibilityRole="button"
+                                        onPress={() =>
+                                          showChartMessage(
+                                            `深睡 ${deep.toFixed(1)} 小时 · ${dateStr}`
+                                          )
+                                        }
+                                        style={{ height: hDeep, backgroundColor: '#1e3a8a' }}
+                                      />
+                                    ) : null}
+                                    {hRem > 0.25 ? (
+                                      <Pressable
+                                        accessibilityRole="button"
+                                        onPress={() =>
+                                          showChartMessage(
+                                            `REM ${rem.toFixed(1)} 小时 · ${dateStr}`
+                                          )
+                                        }
+                                        style={{ height: hRem, backgroundColor: '#6366f1' }}
+                                      />
+                                    ) : null}
+                                    {hLight > 0.25 ? (
+                                      <Pressable
+                                        accessibilityRole="button"
+                                        onPress={() =>
+                                          showChartMessage(
+                                            `浅睡 ${light.toFixed(1)} 小时 · ${dateStr}`
+                                          )
+                                        }
+                                        style={{ height: hLight, backgroundColor: '#93c5fd' }}
+                                      />
+                                    ) : null}
+                                    {hAwake > 0.25 ? (
+                                      <Pressable
+                                        accessibilityRole="button"
+                                        onPress={() =>
+                                          showChartMessage(
+                                            `清醒 ${awake.toFixed(1)} 小时 · ${dateStr}`
+                                          )
+                                        }
+                                        style={{ height: hAwake, backgroundColor: '#94a3b8' }}
+                                      />
+                                    ) : null}
+                                  </View>
+                                </View>
+                              </View>
+                              <Text style={styles.sleepStackDayLabel}>{dateStr}</Text>
+                              <Text style={styles.sleepStackHoursHint}>{total}h</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.sleepLegendRow}>
+                    <View style={styles.sleepLegendItem}>
+                      <View style={[styles.sleepLegendDot, { backgroundColor: '#1e3a8a' }]} />
+                      <Text style={styles.sleepLegendText}>深睡</Text>
+                    </View>
+                    <View style={styles.sleepLegendItem}>
+                      <View style={[styles.sleepLegendDot, { backgroundColor: '#6366f1' }]} />
+                      <Text style={styles.sleepLegendText}>REM</Text>
+                    </View>
+                    <View style={styles.sleepLegendItem}>
+                      <View style={[styles.sleepLegendDot, { backgroundColor: '#93c5fd' }]} />
+                      <Text style={styles.sleepLegendText}>浅睡</Text>
+                    </View>
+                    <View style={styles.sleepLegendItem}>
+                      <View style={[styles.sleepLegendDot, { backgroundColor: '#94a3b8' }]} />
+                      <Text style={styles.sleepLegendText}>清醒</Text>
+                    </View>
+                  </View>
                 </Card.Content>
               </Card>
             );
           } catch (e) {
-            console.warn('睡眠图表渲染失败:', e);
+            console.warn('睡眠区块渲染失败:', e);
             return null;
           }
         })()}
@@ -499,6 +898,15 @@ export default function DeviceScreen() {
         </Card>
       </View>
     </ScrollView>
+    <Snackbar
+      visible={chartSnackbar.visible}
+      onDismiss={() => setChartSnackbar((x) => ({ ...x, visible: false }))}
+      duration={2600}
+      style={styles.chartSnackbar}
+    >
+      {chartSnackbar.message}
+    </Snackbar>
+    </Fragment>
   );
 }
 
@@ -580,6 +988,14 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
   },
+  hrMonitorHint: {
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    marginTop: 6,
+    textAlign: 'center',
+    paddingHorizontal: 4,
+    lineHeight: 14,
+  },
   emptyDevices: {
     alignItems: 'center',
     paddingVertical: theme.spacing.lg,
@@ -659,6 +1075,133 @@ const styles = StyleSheet.create({
   chart: {
     marginVertical: theme.spacing.sm,
     borderRadius: theme.borderRadius.md,
+  },
+  barChartWithPad: {
+    paddingRight: 64,
+    paddingTop: 16,
+  },
+  barChartNoOuterMargin: {
+    marginVertical: 0,
+  },
+  barChartTouchWrap: {
+    position: 'relative',
+    height: 220,
+    alignSelf: 'center',
+    marginVertical: theme.spacing.sm,
+  },
+  barChartTouchOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  chartSnackbar: {
+    marginHorizontal: 16,
+    marginBottom: 24,
+  },
+  sleepChartWithAxis: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+  },
+  sleepYAxisWrap: {
+    width: 40,
+    alignItems: 'flex-end',
+    paddingRight: 4,
+  },
+  sleepYAxisCaption: {
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    marginBottom: 4,
+  },
+  sleepYAxisTicks: {
+    position: 'relative',
+    width: '100%',
+  },
+  sleepYAxisLabel: {
+    position: 'absolute',
+    right: 0,
+    fontSize: 10,
+    lineHeight: 10,
+    color: theme.colors.textSecondary,
+    textAlign: 'right',
+  },
+  sleepYAxisUnit: {
+    fontSize: 9,
+    color: theme.colors.textSecondary,
+    marginTop: 4,
+  },
+  sleepBarsFlex: {
+    flex: 1,
+  },
+  segmented: {
+    marginBottom: theme.spacing.sm,
+  },
+  chartHint: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.spacing.sm,
+    lineHeight: 18,
+  },
+  sleepStackRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    marginTop: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.xs,
+    minHeight: 150,
+    position: 'relative',
+  },
+  sleepStackRowGrid: {
+    paddingBottom: 34,
+  },
+  sleepGridPlane: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 0,
+  },
+  sleepStackCell: {
+    flex: 1,
+    alignItems: 'center',
+    maxWidth: 56,
+    zIndex: 1,
+  },
+  sleepStackTrack: {
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  sleepStackBarInner: {
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  sleepStackDayLabel: {
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  sleepStackHoursHint: {
+    fontSize: 9,
+    color: theme.colors.textSecondary,
+    marginTop: 1,
+  },
+  sleepLegendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: theme.spacing.md,
+  },
+  sleepLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sleepLegendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 4,
+  },
+  sleepLegendText: {
+    fontSize: 11,
+    color: theme.colors.textSecondary,
   },
   exportButton: {
     borderRadius: theme.borderRadius.md,
