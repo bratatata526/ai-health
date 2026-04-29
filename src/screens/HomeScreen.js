@@ -3,7 +3,7 @@ import { View, StyleSheet, ScrollView, Dimensions, Alert, Platform } from 'react
 import { Card, Title, Paragraph, Button, Text, Dialog, Portal, TextInput } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { theme } from '../theme';
+import { theme, textStyles } from '../theme';
 import { CloudSyncService } from '../services/CloudSyncService';
 import { AuthService } from '../services/AuthService';
 
@@ -171,6 +171,27 @@ export default function HomeScreen({ navigation, onLogout }) {
           </Card.Content>
         </Card>
 
+        <Card
+          style={styles.card}
+          onPress={() => {
+            if (Platform.OS === 'web') {
+              window.location.assign('http://localhost:5173');
+            } else {
+              Alert.alert('提示', '该功能仅支持 Web 端');
+            }
+          }}
+        >
+          <Card.Content>
+            <View style={styles.cardHeader}>
+              <Ionicons name="leaf" size={32} color={theme.colors.primary} />
+              <Title style={styles.cardTitle}>AI舌诊</Title>
+            </View>
+            <Paragraph style={styles.cardDescription}>
+              进入中医舌诊页面
+            </Paragraph>
+          </Card.Content>
+        </Card>
+
         <View style={styles.quickActions}>
           <Button
             mode="contained"
@@ -265,12 +286,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
+    ...textStyles.title,
     color: '#fff',
     fontSize: 28,
-    fontWeight: '800',
     marginTop: theme.spacing.md,
   },
   headerSubtitle: {
+    ...textStyles.body,
     color: '#fff',
     fontSize: 16,
     opacity: 0.9,
@@ -308,11 +330,12 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
   },
   cardTitle: {
+    ...textStyles.title,
     marginLeft: theme.spacing.sm,
     fontSize: 20,
-    fontWeight: '800',
   },
   cardDescription: {
+    ...textStyles.body,
     color: theme.colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 import {
   Button,
   Card,
@@ -16,10 +16,22 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AIIcon from '../components/AIIcon';
 import SuggestionIcon from '../components/SuggestionIcon';
-import { theme } from '../theme';
+import { theme, appFontFamilies } from '../theme';
 import { AIService } from '../services/AIService';
 import { MedicineService } from '../services/MedicineService';
 import { DeviceService } from '../services/DeviceService';
+
+/** Dialog 使用 MD3 elevation.level3（主题里常为淡紫Tint），此处强制纯白底与卡片一致，避免看起来像「透明无底」 */
+const dialogSurfaceTheme = {
+  ...theme,
+  colors: {
+    ...theme.colors,
+    elevation: {
+      ...(theme.colors.elevation ?? {}),
+      level3: theme.colors.surface,
+    },
+  },
+};
 
 export default function AIScreen() {
   const [mode, setMode] = useState('chat'); // chat | interactions | advice
@@ -156,9 +168,9 @@ export default function AIScreen() {
             value={mode}
             onValueChange={setMode}
             buttons={[
-              { value: 'chat', label: '问答' },
-              { value: 'interactions', label: '相互作用' },
-              { value: 'advice', label: '建议' },
+              { value: 'chat', label: '问答', labelStyle: styles.segmentLabel },
+              { value: 'interactions', label: '相互作用', labelStyle: styles.segmentLabel },
+              { value: 'advice', label: '建议', labelStyle: styles.segmentLabel },
             ]}
           />
         </Card.Content>
@@ -168,7 +180,7 @@ export default function AIScreen() {
         <Card style={styles.card}>
           <Card.Content>
             <Text style={styles.sectionTitle}>健康问答</Text>
-            <Paragraph style={styles.sectionHint}>
+            <Paragraph style={[styles.sectionHint, styles.sansRegular]}>
               你可以提问：指标是否正常、如何改善睡眠、用药注意事项等（重要问题请咨询医生）。
             </Paragraph>
             <Divider style={styles.divider} />
@@ -221,11 +233,13 @@ export default function AIScreen() {
         <Card style={styles.card}>
           <Card.Content>
             <Text style={styles.sectionTitle}>药物相互作用检测</Text>
-            <Paragraph style={styles.sectionHint}>选择 2 个或以上药品，让 AI 分析是否存在相互作用与风险。</Paragraph>
+            <Paragraph style={[styles.sectionHint, styles.sansRegular]}>
+              选择 2 个或以上药品，让 AI 分析是否存在相互作用与风险。
+            </Paragraph>
             <Divider style={styles.divider} />
 
             {medicines.length === 0 ? (
-              <Paragraph>暂无药品数据，请先在“药品”页添加药品。</Paragraph>
+              <Paragraph style={styles.sansRegular}>暂无药品数据，请先在“药品”页添加药品。</Paragraph>
             ) : (
               <View style={styles.chipsWrap}>
                 {medicines.map((m) => {
@@ -236,6 +250,7 @@ export default function AIScreen() {
                       selected={selected}
                       onPress={() => toggleMedicine(m.id)}
                       style={styles.chip}
+                      textStyle={styles.chipLabel}
                       icon={selected ? 'check' : 'pill'}
                     >
                       {m.name}
@@ -263,7 +278,7 @@ export default function AIScreen() {
         <Card style={styles.card}>
           <Card.Content>
             <Text style={styles.sectionTitle}>个性化健康建议</Text>
-            <Paragraph style={styles.sectionHint}>
+            <Paragraph style={[styles.sectionHint, styles.sansRegular]}>
               基于你的健康数据（心率/血糖/睡眠）与药品管理信息，生成可执行的个性化建议。
             </Paragraph>
             <Divider style={styles.divider} />
@@ -289,21 +304,31 @@ export default function AIScreen() {
       ) : null}
 
       <Portal>
-        <Dialog visible={interactionVisible} onDismiss={() => setInteractionVisible(false)}>
-          <Dialog.Title>相互作用分析结果</Dialog.Title>
-          <Dialog.Content>
-            {interactionLoading ? (
+        <Dialog
+          visible={interactionVisible}
+          onDismiss={() => setInteractionVisible(false)}
+          theme={dialogSurfaceTheme}
+        >
+          <Dialog.Title style={styles.dialogTitle}>相互作用分析结果</Dialog.Title>
+          {interactionLoading ? (
+            <Dialog.Content style={styles.dialogContentBg}>
               <View style={styles.dialogLoading}>
                 <ActivityIndicator size="small" color={theme.colors.primary} />
-                <Text style={{ marginTop: theme.spacing.sm }}>AI 正在分析…</Text>
+                <Text style={[styles.loadingHint, styles.sansRegular]}>AI 正在分析…</Text>
               </View>
-            ) : (
-              <ScrollView style={{ maxHeight: 420 }}>
+            </Dialog.Content>
+          ) : (
+            <Dialog.ScrollArea>
+              <ScrollView
+                nestedScrollEnabled
+                style={{ maxHeight: 420 }}
+                contentContainerStyle={{ paddingVertical: theme.spacing.sm }}
+              >
                 <Text style={styles.resultText}>{interactionResult || '暂无结果'}</Text>
               </ScrollView>
-            )}
-          </Dialog.Content>
-          <Dialog.Actions>
+            </Dialog.ScrollArea>
+          )}
+          <Dialog.Actions style={styles.dialogActions}>
             <Button onPress={() => setInteractionVisible(false)}>关闭</Button>
           </Dialog.Actions>
         </Dialog>
@@ -334,14 +359,33 @@ const styles = StyleSheet.create({
     gap: theme.spacing.sm,
     marginBottom: theme.spacing.sm,
   },
+  sansRegular: {
+    fontFamily: appFontFamilies.regular,
+  },
+  segmentLabel: {
+    fontFamily: appFontFamilies.medium,
+    fontWeight: Platform.OS === 'web' ? '600' : 'normal',
+  },
+  dialogTitle: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
+  },
+  dialogContentBg: {
+    backgroundColor: theme.colors.surface,
+  },
+  dialogActions: {
+    backgroundColor: theme.colors.surface,
+  },
   headerTitle: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
     fontSize: 18,
-    fontWeight: '800',
     color: theme.colors.text,
   },
   sectionTitle: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
     fontSize: 16,
-    fontWeight: '800',
     marginBottom: theme.spacing.xs,
   },
   sectionHint: {
@@ -375,6 +419,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   chatText: {
+    fontFamily: appFontFamilies.regular,
     color: theme.colors.text,
     lineHeight: 20,
   },
@@ -394,6 +439,7 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.xs,
   },
   chatLoadingText: {
+    fontFamily: appFontFamilies.regular,
     color: theme.colors.textSecondary,
   },
   chipsWrap: {
@@ -403,6 +449,10 @@ const styles = StyleSheet.create({
   },
   chip: {
     backgroundColor: theme.colors.surfaceVariant,
+  },
+  chipLabel: {
+    fontFamily: appFontFamilies.regular,
+    fontWeight: Platform.OS === 'web' ? '500' : 'normal',
   },
   resultBox: {
     marginTop: theme.spacing.md,
@@ -414,6 +464,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surfaceVariant,
   },
   resultText: {
+    fontFamily: appFontFamilies.regular,
     fontSize: 14,
     lineHeight: 22,
     color: theme.colors.text,

@@ -11,6 +11,7 @@ import {
 import { Text } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import DoctorAvatar from './DoctorAvatar';
+import { textStyles } from '../theme';
 import { subscribeHeartRateAlerts } from '../services/HeartRateAlertService';
 
 const ICON_SIZE = 56;
@@ -368,6 +369,7 @@ const styles = StyleSheet.create({
     right: ICON_SIZE + 10,
   },
   bubbleText: {
+    ...textStyles.body,
     fontSize: 13,
     color: '#1E293B',
     lineHeight: 20,
@@ -416,6 +418,7 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   menuText: {
+    ...textStyles.body,
     fontSize: 14,
     color: '#1E293B',
   },

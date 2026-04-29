@@ -21,7 +21,7 @@ import {
 } from 'react-native-paper';
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
-import { theme } from '../theme';
+import { theme, textStyles } from '../theme';
 import { ReportService } from '../services/ReportService';
 import { ExportService } from '../services/ExportService';
 import { Alert } from 'react-native';
@@ -127,8 +127,8 @@ export default function ReportScreen() {
               value={reportType}
               onValueChange={setReportType}
               buttons={[
-                { value: 'week', label: '周报告' },
-                { value: 'month', label: '月报告' },
+                { value: 'week', label: '周报告', labelStyle: styles.segmentLabel },
+                { value: 'month', label: '月报告', labelStyle: styles.segmentLabel },
               ]}
             />
             <View style={styles.aiToggleContainer}>
@@ -326,11 +326,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: theme.spacing.xl * 2,
   },
+  segmentLabel: {
+    ...textStyles.semi,
+    fontSize: 13,
+  },
   emptyTitle: {
+    ...textStyles.title,
     marginTop: theme.spacing.md,
     color: theme.colors.text,
   },
   emptyText: {
+    ...textStyles.body,
     textAlign: 'center',
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.sm,
@@ -366,12 +372,12 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
   },
   scoreTitle: {
+    ...textStyles.title,
     fontSize: 18,
-    fontWeight: '800',
   },
   scoreValue: {
+    ...textStyles.emphasis,
     fontSize: 32,
-    fontWeight: 'bold',
     color: theme.colors.primary,
   },
   progressBar: {
@@ -380,12 +386,13 @@ const styles = StyleSheet.create({
     marginVertical: theme.spacing.sm,
   },
   scoreDescription: {
+    ...textStyles.body,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
   },
   sectionTitle: {
+    ...textStyles.title,
     fontSize: 18,
-    fontWeight: '800',
     marginBottom: theme.spacing.md,
   },
   overviewGrid: {
@@ -397,12 +404,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   overviewValue: {
+    ...textStyles.emphasis,
     fontSize: 20,
-    fontWeight: 'bold',
     color: theme.colors.text,
     marginTop: theme.spacing.xs,
   },
   overviewLabel: {
+    ...textStyles.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
@@ -421,6 +429,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   recommendationText: {
+    ...textStyles.body,
     flex: 1,
     color: theme.colors.text,
     lineHeight: 20,
@@ -451,6 +460,7 @@ const styles = StyleSheet.create({
     borderTopColor: theme.colors.outlineVariant,
   },
   aiToggleLabel: {
+    ...textStyles.body,
     fontSize: 14,
     color: theme.colors.text,
   },
@@ -460,6 +470,7 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
   aiAnalysisText: {
+    ...textStyles.body,
     fontSize: 14,
     color: theme.colors.text,
     lineHeight: 22,

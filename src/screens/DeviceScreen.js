@@ -22,7 +22,7 @@ import {
 import { LineChart, BarChart } from 'react-native-chart-kit';
 import Svg, { Line } from 'react-native-svg';
 import { Ionicons } from '@expo/vector-icons';
-import { theme } from '../theme';
+import { theme, textStyles } from '../theme';
 import { DeviceService } from '../services/DeviceService';
 import { ExportService } from '../services/ExportService';
 import {
@@ -464,7 +464,7 @@ export default function DeviceScreen() {
         {loadError && (
           <Card style={[styles.card, { backgroundColor: '#FFF3E0' }]}>
             <Card.Content>
-              <Text style={{ color: '#E65100', textAlign: 'center' }}>{loadError}</Text>
+              <Text style={styles.loadErrorText}>{loadError}</Text>
             </Card.Content>
           </Card>
         )}
@@ -640,8 +640,8 @@ export default function DeviceScreen() {
                     value={hrRange}
                     onValueChange={setHrRange}
                     buttons={[
-                      { value: 'day', label: '日心率' },
-                      { value: 'week', label: '周心率' },
+                      { value: 'day', label: '日心率', labelStyle: styles.segmentLabel },
+                      { value: 'week', label: '周心率', labelStyle: styles.segmentLabel },
                     ]}
                     style={styles.segmented}
                   />
@@ -744,8 +744,8 @@ export default function DeviceScreen() {
                     value={glucoseRange}
                     onValueChange={setGlucoseRange}
                     buttons={[
-                      { value: 'day', label: '日血糖' },
-                      { value: 'week', label: '周血糖' },
+                      { value: 'day', label: '日血糖', labelStyle: styles.segmentLabel },
+                      { value: 'week', label: '周血糖', labelStyle: styles.segmentLabel },
                     ]}
                     style={styles.segmented}
                   />
@@ -1125,6 +1125,11 @@ const styles = StyleSheet.create({
   content: {
     padding: theme.spacing.md,
   },
+  loadErrorText: {
+    ...textStyles.body,
+    color: '#E65100',
+    textAlign: 'center',
+  },
   statsCard: {
     marginBottom: theme.spacing.md,
     borderRadius: theme.borderRadius.lg,
@@ -1172,8 +1177,8 @@ const styles = StyleSheet.create({
     }),
   },
   sectionTitle: {
+    ...textStyles.title,
     fontSize: 18,
-    fontWeight: '800',
     marginBottom: theme.spacing.md,
   },
   statsGrid: {
@@ -1185,17 +1190,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statValue: {
+    ...textStyles.emphasis,
     fontSize: 24,
-    fontWeight: 'bold',
     color: theme.colors.text,
     marginTop: theme.spacing.xs,
   },
   statLabel: {
+    ...textStyles.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
   },
   hrMonitorHint: {
+    ...textStyles.body,
     fontSize: 10,
     color: theme.colors.textSecondary,
     marginTop: 6,
@@ -1208,6 +1215,7 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.lg,
   },
   emptyText: {
+    ...textStyles.body,
     color: theme.colors.textSecondary,
     marginBottom: theme.spacing.md,
   },
@@ -1235,11 +1243,12 @@ const styles = StyleSheet.create({
     marginLeft: theme.spacing.sm,
   },
   deviceName: {
+    ...textStyles.emphasis,
     fontSize: 16,
-    fontWeight: 'bold',
     color: theme.colors.text,
   },
   deviceStatus: {
+    ...textStyles.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginTop: 2,
@@ -1254,8 +1263,8 @@ const styles = StyleSheet.create({
     paddingTop: theme.spacing.sm,
   },
   nearbyTitle: {
+    ...textStyles.title,
     fontSize: 14,
-    fontWeight: '700',
     marginBottom: theme.spacing.sm,
     color: theme.colors.text,
   },
@@ -1276,6 +1285,7 @@ const styles = StyleSheet.create({
     gap: theme.spacing.xs,
   },
   scanHintText: {
+    ...textStyles.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
   },
@@ -1313,6 +1323,7 @@ const styles = StyleSheet.create({
     paddingRight: 4,
   },
   sleepYAxisCaption: {
+    ...textStyles.body,
     fontSize: 10,
     color: theme.colors.textSecondary,
     marginBottom: 4,
@@ -1322,6 +1333,7 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   sleepYAxisLabel: {
+    ...textStyles.body,
     position: 'absolute',
     right: 0,
     fontSize: 10,
@@ -1330,6 +1342,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   sleepYAxisUnit: {
+    ...textStyles.body,
     fontSize: 9,
     color: theme.colors.textSecondary,
     marginTop: 4,
@@ -1340,7 +1353,12 @@ const styles = StyleSheet.create({
   segmented: {
     marginBottom: theme.spacing.sm,
   },
+  segmentLabel: {
+    ...textStyles.semi,
+    fontSize: 13,
+  },
   chartHint: {
+    ...textStyles.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginBottom: theme.spacing.sm,
@@ -1380,11 +1398,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sleepStackDayLabel: {
+    ...textStyles.body,
     fontSize: 10,
     color: theme.colors.textSecondary,
     marginTop: 2,
   },
   sleepStackHoursHint: {
+    ...textStyles.body,
     fontSize: 9,
     color: theme.colors.textSecondary,
     marginTop: 1,
@@ -1407,6 +1427,7 @@ const styles = StyleSheet.create({
     marginRight: 4,
   },
   sleepLegendText: {
+    ...textStyles.body,
     fontSize: 11,
     color: theme.colors.textSecondary,
   },

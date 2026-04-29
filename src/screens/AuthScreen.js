@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { Button, Card, Paragraph, Text, TextInput, Title } from 'react-native-paper';
-import { theme } from '../theme';
+import { theme, textStyles } from '../theme';
 import { AuthService } from '../services/AuthService';
 import { CloudSyncService } from '../services/CloudSyncService';
 import { isValidEmail, validatePassword, validateName } from '../utils/validation';
@@ -179,12 +179,13 @@ const styles = StyleSheet.create({
     }),
   },
   title: {
+    ...textStyles.title,
     marginBottom: theme.spacing.xs,
     fontSize: 26,
-    fontWeight: '800',
     color: theme.colors.text,
   },
   subtitle: {
+    ...textStyles.body,
     color: theme.colors.textSecondary,
     marginBottom: theme.spacing.md,
     lineHeight: 20,
@@ -201,11 +202,13 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.xs,
   },
   errorText: {
+    ...textStyles.body,
     color: theme.colors.error,
     marginTop: theme.spacing.xs,
     marginBottom: theme.spacing.xs,
   },
   fieldErrorText: {
+    ...textStyles.body,
     color: theme.colors.error,
     marginTop: -theme.spacing.xs,
     marginBottom: theme.spacing.xs,

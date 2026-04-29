@@ -31,7 +31,7 @@ import { Ionicons } from '@expo/vector-icons';
 import ClockIcon from '../components/ClockIcon';
 import DatePicker from '../components/DatePicker';
 import AIGeneratedIcon from '../components/AIGeneratedIcon';
-import { theme } from '../theme';
+import { theme, textStyles } from '../theme';
 import { MedicineService } from '../services/MedicineService';
 import { ExportService } from '../services/ExportService';
 import { validateMedicineName, validateTimesText, validateDateRange } from '../utils/validation';
@@ -1908,8 +1908,8 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.sm,
   },
   medicineName: {
+    ...textStyles.title,
     fontSize: 20,
-    fontWeight: '800',
     flex: 1,
   },
   medicineActions: {
@@ -1937,6 +1937,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   chipText: {
+    ...textStyles.body,
     fontSize: 14,
     color: theme.colors.text,
   },
@@ -1954,12 +1955,13 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.outlineVariant,
   },
   remindersTitle: {
+    ...textStyles.emphasis,
     fontSize: 14,
-    fontWeight: 'bold',
     color: theme.colors.primary,
     marginBottom: theme.spacing.xs,
   },
   remindersEmpty: {
+    ...textStyles.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
   },
@@ -1971,8 +1973,8 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.xs,
   },
   reminderTime: {
+    ...textStyles.emphasis,
     fontSize: 14,
-    fontWeight: 'bold',
     color: theme.colors.text,
     minWidth: 54,
   },
@@ -2032,6 +2034,7 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
   },
   recognizingText: {
+    ...textStyles.body,
     marginLeft: theme.spacing.sm,
     color: theme.colors.primary,
     fontSize: 14,
@@ -2072,8 +2075,8 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.outlineVariant,
   },
   manualFormTitle: {
+    ...textStyles.emphasis,
     fontSize: 14,
-    fontWeight: 'bold',
     color: theme.colors.primary,
     marginBottom: theme.spacing.sm,
   },
@@ -2105,9 +2108,9 @@ const styles = StyleSheet.create({
     gap: theme.spacing.sm,
   },
   detailsTitleText: {
+    ...textStyles.title,
     flex: 1,
     fontSize: 18,
-    fontWeight: '800',
     color: theme.colors.text,
     lineHeight: 24,
   },
@@ -2126,8 +2129,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(124, 58, 237, 0.14)',
   },
   sourceChipText: {
+    ...textStyles.title,
     fontSize: 12,
-    fontWeight: '700',
   },
   detailsMetaRow: {
     flexDirection: 'row',
@@ -2136,6 +2139,7 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.sm,
   },
   detailsMetaText: {
+    ...textStyles.body,
     color: theme.colors.textSecondary,
     fontSize: 13,
     lineHeight: 18,
@@ -2149,6 +2153,7 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.outlineVariant,
   },
   aiNoteText: {
+    ...textStyles.body,
     color: theme.colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
@@ -2157,8 +2162,8 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
   sectionTitle: {
+    ...textStyles.title,
     fontSize: 14,
-    fontWeight: '800',
     color: theme.colors.primary,
     marginBottom: theme.spacing.sm,
   },
@@ -2177,12 +2182,13 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.xs,
   },
   detailInlineLabel: {
+    ...textStyles.title,
     width: 76,
     color: theme.colors.textSecondary,
     fontSize: 13,
-    fontWeight: '700',
   },
   detailInlineValue: {
+    ...textStyles.body,
     flex: 1,
     color: theme.colors.text,
     fontSize: 13,
@@ -2192,12 +2198,13 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
   detailLabel: {
+    ...textStyles.emphasis,
     fontSize: 14,
-    fontWeight: 'bold',
     color: theme.colors.primary,
     marginBottom: theme.spacing.xs,
   },
   detailValue: {
+    ...textStyles.body,
     fontSize: 14,
     color: theme.colors.text,
     lineHeight: 20,
@@ -2212,12 +2219,13 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.sm,
   },
   recognitionResultTitle: {
+    ...textStyles.emphasis,
     fontSize: 16,
-    fontWeight: 'bold',
     color: theme.colors.primary,
     marginBottom: theme.spacing.sm,
   },
   recognitionResultText: {
+    ...textStyles.body,
     fontSize: 14,
     color: theme.colors.text,
     marginBottom: theme.spacing.xs,
@@ -2228,12 +2236,13 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
   },
   historyMedicineName: {
+    ...textStyles.emphasis,
     fontSize: 18,
-    fontWeight: 'bold',
     color: theme.colors.text,
     marginBottom: theme.spacing.xxs,
   },
   historySubtitle: {
+    ...textStyles.body,
     fontSize: 14,
     color: theme.colors.textSecondary,
   },
@@ -2249,6 +2258,7 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.xl * 2,
   },
   historyEmptyText: {
+    ...textStyles.body,
     marginTop: theme.spacing.md,
     color: theme.colors.textSecondary,
     fontSize: 14,
@@ -2274,14 +2284,15 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.outlineVariant,
   },
   statLabel: {
+    ...textStyles.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
     marginBottom: theme.spacing.xxs,
   },
   statValue: {
+    ...textStyles.emphasis,
     fontSize: 20,
-    fontWeight: 'bold',
     color: theme.colors.text,
   },
   adherenceCard: {
@@ -2298,13 +2309,13 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
   },
   adherenceLabel: {
+    ...textStyles.semi,
     fontSize: 14,
-    fontWeight: '600',
     color: theme.colors.text,
   },
   adherenceValue: {
+    ...textStyles.emphasis,
     fontSize: 32,
-    fontWeight: 'bold',
     color: theme.colors.primary,
     marginBottom: theme.spacing.xs,
   },
@@ -2365,11 +2376,11 @@ const styles = StyleSheet.create({
     flexShrink: 1, // 允许适当收缩以容纳 Chip
   },
   timelineTimeText: {
+    ...textStyles.semi,
     fontSize: 14,
     color: theme.colors.text,
-    fontWeight: '600',
-    lineHeight: 20, // 固定行高
-    flexShrink: 0, // 防止文字被压缩
+    lineHeight: 20,
+    flexShrink: 0,
   },
   statusChip: {
     height: 26,
