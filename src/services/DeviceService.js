@@ -49,6 +49,30 @@ function migrateHealthPayload(data) {
   return { heartRate, bloodGlucose, sleep };
 }
 
+/**
+ * 心率/血糖点序列：同一时刻（毫秒时间戳）只保留一条，后写入覆盖先写入；并合并历史中已存在的重复项。
+ */
+function mergePointSeriesByInstant(existing, incoming) {
+  const map = new Map();
+  const keyFor = (dateField) => {
+    const t = new Date(dateField).getTime();
+    if (Number.isFinite(t)) return `t:${t}`;
+    return `raw:${String(dateField)}`;
+  };
+  const put = (item) => {
+    if (!item || item.date == null) return;
+    map.set(keyFor(item.date), item);
+  };
+  (existing || []).forEach(put);
+  (incoming || []).forEach(put);
+  return Array.from(map.values()).sort((a, b) => {
+    const ta = new Date(a.date).getTime();
+    const tb = new Date(b.date).getTime();
+    if (Number.isFinite(ta) && Number.isFinite(tb)) return ta - tb;
+    return 0;
+  });
+}
+
 export class DeviceService {
   static async getConnectedDevices() {
     try {
@@ -120,8 +144,14 @@ export class DeviceService {
     try {
       const existingData = migrateHealthPayload(await this.getHealthDataForStorage());
 
-      existingData.heartRate.push(...(newData.heartRate || []));
-      existingData.bloodGlucose.push(...(newData.bloodGlucose || []));
+      existingData.heartRate = mergePointSeriesByInstant(
+        existingData.heartRate,
+        newData.heartRate
+      );
+      existingData.bloodGlucose = mergePointSeriesByInstant(
+        existingData.bloodGlucose,
+        newData.bloodGlucose
+      );
 
       const incomingSleep = (newData.sleep || []).map(migrateSleepEntry).filter(Boolean);
       incomingSleep.forEach((s) => {

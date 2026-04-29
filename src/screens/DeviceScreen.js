@@ -25,6 +25,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../theme';
 import { DeviceService } from '../services/DeviceService';
 import { ExportService } from '../services/ExportService';
+import {
+  downloadGlucoseTemplate,
+  downloadSleepTemplate,
+  importFromWorkbook,
+} from '../services/HealthExcelService';
+import { importAppleHealthSleepFromExportXml } from '../services/AppleHealthSleepImportService';
 import { Alert } from 'react-native';
 import { bleHeartRateService } from '../services/BleHeartRateService';
 import { heartRateAlertMonitor } from '../services/HeartRateAlertService';
@@ -42,10 +48,34 @@ const { width } = Dimensions.get('window');
 /** 周柱图透明点击层：由 X 估算柱索引（与 chart-kit BarChart 布局一致） */
 function barIndexFromTouch(locationX, nBars, chartWidth, paddingRight, barPercentage) {
   if (nBars <= 0) return -1;
+  if (
+    !Number.isFinite(locationX) ||
+    !Number.isFinite(chartWidth) ||
+    !Number.isFinite(paddingRight) ||
+    !Number.isFinite(barPercentage)
+  ) {
+    return -1;
+  }
   const inner = chartWidth - paddingRight;
+  if (inner <= 0) return -1;
   const barW = 32 * barPercentage;
-  const i = Math.round(((locationX - paddingRight - barW / 2) * nBars) / inner);
+  const raw = ((locationX - paddingRight - barW / 2) * nBars) / inner;
+  const i = Math.round(raw);
+  if (!Number.isFinite(i)) return -1;
   return Math.max(0, Math.min(nBars - 1, i));
+}
+
+/** RN Web 等环境下 locationX 可能缺失，尝试 offsetX */
+function getPressLocationX(event) {
+  const ne = event?.nativeEvent;
+  if (!ne) return NaN;
+  if (typeof ne.locationX === 'number' && Number.isFinite(ne.locationX)) {
+    return ne.locationX;
+  }
+  if (typeof ne.offsetX === 'number' && Number.isFinite(ne.offsetX)) {
+    return ne.offsetX;
+  }
+  return NaN;
 }
 
 /** 睡眠图背景网格：与 react-native-chart-kit 相同 strokeDasharray，刻度与柱高共用 trackH 比例 */
@@ -121,6 +151,8 @@ export default function DeviceScreen() {
   const [hrRange, setHrRange] = useState('day');
   const [glucoseRange, setGlucoseRange] = useState('day');
   const [chartSnackbar, setChartSnackbar] = useState({ visible: false, message: '' });
+  /** 模板下载 / Excel 导入进行中 */
+  const [excelBusy, setExcelBusy] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -156,28 +188,65 @@ export default function DeviceScreen() {
       setDevices(Array.isArray(deviceData) ? deviceData : []);
       setHealthData(data);
 
-      // 计算今日统计数据
+      // 今日统计：分项计算；心率用全局最近一条，血糖为今日最后一条，睡眠为日历日落在今天的记录
       const today = new Date().toDateString();
-      const todayData = data.heartRate.filter(
-        (item) => {
-          try { return new Date(item.date).toDateString() === today; } catch { return false; }
-        }
-      );
 
-      if (todayData.length > 0) {
-        const avgHeartRate = todayData.reduce((sum, item) => sum + Number(item.value || 0), 0) / todayData.length;
-        const latestGlucose = data.bloodGlucose[data.bloodGlucose.length - 1]?.value || 0;
-        const lastSleep = data.sleep[data.sleep.length - 1];
-        const latestSleep = lastSleep
-          ? Number(lastSleep.totalHours != null ? lastSleep.totalHours : lastSleep.value || 0)
-          : 0;
-
-        setTodayStats({
-          heartRate: Math.round(avgHeartRate),
-          bloodGlucose: latestGlucose,
-          sleep: typeof latestSleep === 'number' ? latestSleep : parseFloat(latestSleep) || 0,
+      let heartStat = 0;
+      if (data.heartRate.length > 0) {
+        const latestHr = [...data.heartRate].reduce((best, item) => {
+          try {
+            const t = new Date(item.date).getTime();
+            const bt = new Date(best.date).getTime();
+            if (!Number.isFinite(t)) return best;
+            if (!Number.isFinite(bt)) return item;
+            return t > bt ? item : best;
+          } catch {
+            return best;
+          }
         });
+        heartStat = Math.round(Number(latestHr.value || 0));
       }
+
+      let glucoseStat = 0;
+      const todayGlucose = data.bloodGlucose.filter((item) => {
+        try {
+          return new Date(item.date).toDateString() === today;
+        } catch {
+          return false;
+        }
+      });
+      if (todayGlucose.length > 0) {
+        const lastG = [...todayGlucose].sort(
+          (a, b) => new Date(a.date) - new Date(b.date)
+        )[todayGlucose.length - 1];
+        glucoseStat = Number(lastG.value || 0);
+      }
+
+      let sleepStat = 0;
+      const todaySleepRows = data.sleep.filter((item) => {
+        try {
+          return new Date(item.date).toDateString() === today;
+        } catch {
+          return false;
+        }
+      });
+      if (todaySleepRows.length > 0) {
+        const s = [...todaySleepRows].sort(
+          (a, b) => new Date(a.date) - new Date(b.date)
+        )[todaySleepRows.length - 1];
+        const totalVal =
+          s.totalHours != null ? s.totalHours : s.value != null ? s.value : 0;
+        sleepStat =
+          typeof totalVal === 'number'
+            ? totalVal
+            : parseFloat(String(totalVal)) || 0;
+      }
+
+      setTodayStats({
+        heartRate: heartStat,
+        bloodGlucose: glucoseStat,
+        sleep: sleepStat,
+      });
     } catch (error) {
       console.error('加载设备数据失败:', error);
       setLoadError('数据加载失败，请下拉刷新重试');
@@ -307,6 +376,17 @@ export default function DeviceScreen() {
     }
   };
 
+  /** 模拟血糖仪：无 BLE，仅从本地列表移除 */
+  const disconnectGlucometerDevice = async (deviceId) => {
+    try {
+      await DeviceService.removeDevice(deviceId);
+      await loadData();
+    } catch (error) {
+      console.error('断开血糖仪失败:', error);
+      Alert.alert('操作失败', '断开设备失败，请重试');
+    }
+  };
+
   const chartConfig = {
     backgroundColor: theme.colors.surface,
     backgroundGradientFrom: theme.colors.surface,
@@ -342,6 +422,33 @@ export default function DeviceScreen() {
 
   const showChartMessage = (message) => {
     setChartSnackbar({ visible: true, message });
+  };
+
+  const runExcelTask = async (busyKey, fn) => {
+    try {
+      setExcelBusy(busyKey);
+      const result = await fn();
+      if (result?.success) {
+        Alert.alert('成功', result.message || '操作已完成');
+        if (
+          busyKey === 'import-glucose' ||
+          busyKey === 'import-sleep' ||
+          busyKey === 'import-apple-sleep'
+        ) {
+          await loadData();
+        }
+      } else if (result?.message) {
+        Alert.alert(
+          busyKey.startsWith('import') ? '提示' : '未完成',
+          result.message
+        );
+      }
+    } catch (error) {
+      console.error('Excel 操作失败:', error);
+      Alert.alert('错误', error?.message || '操作失败，请重试');
+    } finally {
+      setExcelBusy(null);
+    }
   };
 
   return (
@@ -447,10 +554,15 @@ export default function DeviceScreen() {
                   >
                     {device.battery}%
                   </Chip>
-                  {device.type === 'bracelet' && (
+                  {(device.type === 'bracelet' ||
+                    device.type === 'glucometer') && (
                     <Button
                       mode="text"
-                      onPress={() => disconnectHeartRateDevice(device.id)}
+                      onPress={() =>
+                        device.type === 'bracelet'
+                          ? disconnectHeartRateDevice(device.id)
+                          : disconnectGlucometerDevice(device.id)
+                      }
                     >
                       断开
                     </Button>
@@ -573,15 +685,18 @@ export default function DeviceScreen() {
                         accessibilityLabel="查看心率柱形数值"
                         onPress={(e) => {
                           const idx = barIndexFromTouch(
-                            e.nativeEvent.locationX,
+                            getPressLocationX(e),
                             values.length,
                             chartWidth,
                             64,
                             chartConfigWeekBarHr.barPercentage ?? 0.52
                           );
+                          if (idx < 0 || idx >= values.length) return;
+                          const label = weekHr.labels[idx];
                           const v = values[idx];
+                          if (label == null || !Number.isFinite(Number(v))) return;
                           showChartMessage(
-                            `${weekHr.labels[idx]} 日均心率 ${Math.round(v)} bpm`
+                            `${label} 日均心率 ${Math.round(Number(v))} bpm`
                           );
                         }}
                       />
@@ -623,7 +738,7 @@ export default function DeviceScreen() {
                 <Card.Content>
                   <Title style={styles.sectionTitle}>血糖变化</Title>
                   <Paragraph style={styles.chartHint}>
-                    日视图：折线为当日每小时平均血糖 (mmol/L)。周视图：柱高为近 7 天日均。点击数据点或柱子查看数值。
+                    日视图(必须包含当日数据)：折线为当日每小时平均血糖 (mmol/L)。周视图：柱高为近 7 天日均。点击数据点或柱子查看数值。
                   </Paragraph>
                   <SegmentedButtons
                     value={glucoseRange}
@@ -674,15 +789,18 @@ export default function DeviceScreen() {
                         accessibilityLabel="查看血糖柱形数值"
                         onPress={(e) => {
                           const idx = barIndexFromTouch(
-                            e.nativeEvent.locationX,
+                            getPressLocationX(e),
                             values.length,
                             chartWidth,
                             64,
                             chartConfigWeekBarGlucose.barPercentage ?? 0.52
                           );
+                          if (idx < 0 || idx >= values.length) return;
+                          const label = weekG.labels[idx];
                           const v = values[idx];
+                          if (label == null || !Number.isFinite(Number(v))) return;
                           showChartMessage(
-                            `${weekG.labels[idx]} 日均血糖 ${Number(v).toFixed(1)} mmol/L`
+                            `${label} 日均血糖 ${Number(v).toFixed(1)} mmol/L`
                           );
                         }}
                       />
@@ -872,6 +990,95 @@ export default function DeviceScreen() {
             return null;
           }
         })()}
+
+        {/* Excel：模板与分项导入 */}
+        <Card style={styles.card}>
+          <Card.Content>
+            <Title style={styles.sectionTitle}>血糖 / 睡眠 Excel 导入</Title>
+            <Paragraph style={styles.chartHint}>
+              先下载对应模板（.xlsx），按首行表头填写数据；血糖与睡眠需分开选择文件导入。日期支持「2025-04-29」或
+              Excel 日期格式；时间列可填 08:30。睡眠表仅需「日期」与「总睡眠(小时)」，其余列可留空（将按比例估算）。
+            </Paragraph>
+            <Paragraph style={[styles.chartHint, styles.appleImportHint]}>
+              Apple 健康：在 iPhone
+              导出中的「导出.xml」可选择导入睡眠分析（HKCategoryTypeIdentifierSleepAnalysis）。总睡眠不含「在床」时段；深睡/核心/REM/未分类计入总时长，午睡与当天夜间睡眠按结束日合并为一条。
+            </Paragraph>
+            <View style={styles.deviceButtons}>
+              <Button
+                mode="outlined"
+                icon="file-excel"
+                onPress={() =>
+                  runExcelTask('tpl-glucose', () => downloadGlucoseTemplate())
+                }
+                style={styles.deviceButton}
+                disabled={!!excelBusy}
+                loading={excelBusy === 'tpl-glucose'}
+              >
+                下载血糖模板
+              </Button>
+              <Button
+                mode="outlined"
+                icon="file-excel"
+                onPress={() =>
+                  runExcelTask('tpl-sleep', () => downloadSleepTemplate())
+                }
+                style={styles.deviceButton}
+                disabled={!!excelBusy}
+                loading={excelBusy === 'tpl-sleep'}
+              >
+                下载睡眠模板
+              </Button>
+            </View>
+            <View style={[styles.deviceButtons, styles.importExcelRow]}>
+              <Button
+                mode="contained"
+                icon="upload"
+                onPress={() =>
+                  runExcelTask('import-glucose', () =>
+                    importFromWorkbook('glucose')
+                  )
+                }
+                style={styles.deviceButton}
+                disabled={!!excelBusy}
+                loading={excelBusy === 'import-glucose'}
+                buttonColor={theme.colors.secondary}
+              >
+                导入血糖
+              </Button>
+              <Button
+                mode="contained"
+                icon="upload"
+                onPress={() =>
+                  runExcelTask('import-sleep', () =>
+                    importFromWorkbook('sleep')
+                  )
+                }
+                style={styles.deviceButton}
+                disabled={!!excelBusy}
+                loading={excelBusy === 'import-sleep'}
+                buttonColor={theme.colors.accent}
+              >
+                导入睡眠
+              </Button>
+            </View>
+            <View style={[styles.deviceButtons, styles.importExcelRow]}>
+              <Button
+                mode="outlined"
+                icon="file-document-outline"
+                onPress={() =>
+                  runExcelTask('import-apple-sleep', () =>
+                    importAppleHealthSleepFromExportXml()
+                  )
+                }
+                style={[styles.deviceButton, styles.appleXmlFullWidth]}
+                disabled={!!excelBusy}
+                loading={excelBusy === 'import-apple-sleep'}
+              >
+                导入 Apple 健康睡眠
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
 
         {/* 导出数据按钮 */}
         <Card style={styles.card}>
@@ -1205,6 +1412,16 @@ const styles = StyleSheet.create({
   },
   exportButton: {
     borderRadius: theme.borderRadius.md,
+  },
+  importExcelRow: {
+    marginTop: theme.spacing.sm,
+  },
+  appleImportHint: {
+    marginTop: theme.spacing.xs,
+  },
+  appleXmlFullWidth: {
+    flex: 1,
+    minWidth: '100%',
   },
 });
 

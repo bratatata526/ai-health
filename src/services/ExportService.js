@@ -4,6 +4,9 @@ import { ReportService } from './ReportService';
 import * as FileSystem from 'expo-file-system';
 import { Platform, Share } from 'react-native';
 
+const MIME_XLSX =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
 /**
  * 数据导出服务
  * 支持导出健康数据、药品信息、报告等为CSV、JSON格式
@@ -197,6 +200,45 @@ export class ExportService {
       }
     } catch (error) {
       console.error('保存文件失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 分享二进制文件（内容已 base64 编码，适用于 xlsx 等）
+   */
+  static async shareBase64File(base64Content, filename, mimeType = MIME_XLSX) {
+    try {
+      if (Platform.OS === 'web') {
+        const binary = atob(base64Content);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        return { success: true, message: '模板已下载' };
+      }
+
+      const fileUri = `${FileSystem.cacheDirectory}${filename}`;
+      await FileSystem.writeAsStringAsync(fileUri, base64Content, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      await Share.share({
+        url: fileUri,
+        title: filename,
+        message: `分享文件: ${filename}`,
+      });
+      return { success: true, fileUri, message: '已生成文件，可在分享面板中保存' };
+    } catch (error) {
+      console.error('分享二进制文件失败:', error);
       throw error;
     }
   }
