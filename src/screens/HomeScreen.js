@@ -3,7 +3,7 @@ import { View, StyleSheet, ScrollView, Dimensions, Alert, Platform } from 'react
 import { Card, Title, Paragraph, Button, Text, Dialog, Portal, TextInput } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { theme } from '../theme';
+import { theme, textStyles } from '../theme';
 import { CloudSyncService } from '../services/CloudSyncService';
 import { AuthService } from '../services/AuthService';
 
@@ -265,12 +265,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
+    ...textStyles.title,
     color: '#fff',
     fontSize: 28,
-    fontWeight: '800',
     marginTop: theme.spacing.md,
   },
   headerSubtitle: {
+    ...textStyles.body,
     color: '#fff',
     fontSize: 16,
     opacity: 0.9,
@@ -308,11 +309,12 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
   },
   cardTitle: {
+    ...textStyles.title,
     marginLeft: theme.spacing.sm,
     fontSize: 20,
-    fontWeight: '800',
   },
   cardDescription: {
+    ...textStyles.body,
     color: theme.colors.textSecondary,
     fontSize: 14,
     lineHeight: 20,

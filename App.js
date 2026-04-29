@@ -5,6 +5,7 @@ import { NavigationContainer, createNavigationContainerRef } from '@react-naviga
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { optionalAppFonts } from './src/optionalFonts';
 import { Provider as PaperProvider } from 'react-native-paper';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -18,7 +19,7 @@ import AuthScreen from './src/screens/AuthScreen';
 import AIScreen from './src/screens/AIScreen';
 import AIIcon from './src/components/AIIcon';
 import FloatingAIAssistant from './src/components/FloatingAIAssistant';
-import { theme } from './src/theme';
+import { theme, appFontFamilies } from './src/theme';
 import {
   MedicineService,
   MEDICINE_REMINDER_CATEGORY,
@@ -73,10 +74,31 @@ const LogoTitle = () => {
 
 export default function App() {
   // Web/原生：确保图标字体加载完成，否则 Ionicons/MaterialCommunityIcons 可能显示为空白
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     ...Ionicons.font,
     ...MaterialCommunityIcons.font,
+    ...optionalAppFonts,
   });
+  const fontsReady = fontsLoaded || fontError != null;
+
+  useEffect(() => {
+    if (__DEV__ && fontError) {
+      // eslint-disable-next-line no-console
+      console.warn('[fonts] Load failed (will render with fallbacks):', fontError?.message ?? fontError);
+    }
+  }, [fontError]);
+
+  /** Web：根结点继承正文栈（不依赖 expo-font 注册 Noto 文件名）。 */
+  useEffect(() => {
+    if (!fontsReady || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const rootFont = appFontFamilies.regular;
+    try {
+      document.documentElement.style.fontFamily = rootFont;
+      document.body.style.fontFamily = rootFont;
+    } catch {
+      // ignore
+    }
+  }, [fontsReady]);
 
   const [authed, setAuthed] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
@@ -194,7 +216,7 @@ export default function App() {
         }}
       >
         <StatusBar style="light" />
-        {!fontsLoaded ? (
+        {!fontsReady ? (
           <View style={styles.loadingContainer}>
             <Ionicons name="cloud-outline" size={32} color="#fff" />
           </View>
@@ -235,6 +257,7 @@ export default function App() {
                 borderTopColor: theme.colors.outlineVariant,
               },
               tabBarLabelStyle: {
+                fontFamily: appFontFamilies.regular,
                 fontSize: 12,
                 paddingBottom: 2,
               },
@@ -243,7 +266,8 @@ export default function App() {
               },
               headerTintColor: '#fff',
               headerTitleStyle: {
-                fontWeight: 'bold',
+                fontFamily: appFontFamilies.bold,
+                fontWeight: Platform.OS === 'web' ? 'bold' : undefined,
               },
               headerTitle: () => <LogoTitle />,
             })}

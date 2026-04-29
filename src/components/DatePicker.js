@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { View, Platform, TouchableOpacity, Text } from 'react-native';
-import { TextInput, Button, Dialog, Portal } from 'react-native-paper';
-import { theme } from '../theme';
+import { View, Platform, TouchableOpacity } from 'react-native';
+import { TextInput, Button, Dialog, Portal, Text } from 'react-native-paper';
+import { theme, textStyles, appFontFamilies } from '../theme';
 
 /**
  * 日期选择器组件
@@ -86,7 +86,16 @@ export default function DatePicker({ label, value, onChange, required = false, s
     return (
       <View style={style}>
         {label && (
-          <label style={{ display: 'block', marginBottom: 4, fontSize: '14px', color: theme.colors.text, fontWeight: '500' }}>
+          <label
+            style={{
+              display: 'block',
+              marginBottom: 4,
+              fontSize: '14px',
+              color: theme.colors.text,
+              fontWeight: '500',
+              fontFamily: appFontFamilies.regular,
+            }}
+          >
             {label} {required && <span style={{ color: theme.colors.error }}>*</span>}
           </label>
         )}
@@ -103,7 +112,7 @@ export default function DatePicker({ label, value, onChange, required = false, s
             border: `1px solid ${theme.colors.outline}`,
             borderRadius: theme.borderRadius.md,
             fontSize: '16px',
-            fontFamily: 'inherit',
+            fontFamily: appFontFamilies.regular,
             backgroundColor: '#fff',
             boxSizing: 'border-box',
           }}
@@ -177,7 +186,7 @@ export default function DatePicker({ label, value, onChange, required = false, s
               />
             </View>
             {tempDate.year && tempDate.month && (
-              <Text style={{ fontSize: 12, color: theme.colors.textSecondary, marginTop: -8, marginBottom: theme.spacing.sm }}>
+            <Text style={[textStyles.body, { fontSize: 12, color: theme.colors.textSecondary, marginTop: -8, marginBottom: theme.spacing.sm }]}>
                 {tempDate.year}年{parseInt(tempDate.month)}月共有 {getDaysInMonth(tempDate.year, tempDate.month)} 天
               </Text>
             )}

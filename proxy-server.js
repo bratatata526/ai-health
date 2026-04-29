@@ -290,7 +290,20 @@ const server = http.createServer(async (req, res) => {
       if (!apiKey) {
         return sendJson(res, 400, { error: 'Missing SiliconFlow API key' });
       }
-      const { model, messages, max_tokens, temperature } = body;
+      const {
+        model,
+        messages,
+        max_tokens,
+        temperature,
+        frequency_penalty,
+        presence_penalty,
+        top_p,
+      } = body;
+      const sfPayload = { model, messages, max_tokens, temperature };
+      if (typeof frequency_penalty === 'number') sfPayload.frequency_penalty = frequency_penalty;
+      if (typeof presence_penalty === 'number') sfPayload.presence_penalty = presence_penalty;
+      if (typeof top_p === 'number') sfPayload.top_p = top_p;
+
       const targetUrl = 'https://api.siliconflow.cn/v1/chat/completions';
       const r = await requestUrl(targetUrl, {
         method: 'POST',
@@ -298,7 +311,7 @@ const server = http.createServer(async (req, res) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({ model, messages, max_tokens, temperature }),
+        body: JSON.stringify(sfPayload),
       });
       let json;
       try {

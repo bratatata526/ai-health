@@ -1,6 +1,8 @@
 import { AI_CONFIG, getEnabledAIServices } from '../config/ai';
 import { WEB_PROXY_CONFIG } from '../config/webProxy';
 import { Platform } from 'react-native';
+import { buildHealthAdviceSummary } from '../utils/healthSummaryForAI';
+import { sanitizeHealthAdviceText } from '../utils/sanitizeAiOutput';
 
 /**
  * AI服务类
@@ -11,11 +13,15 @@ export class AIService {
   /**
    * 调用硅基流动 API（兼容OpenAI格式）
    */
-  static async callSiliconFlow(messages, config = AI_CONFIG.SILICONFLOW) {
+  static async callSiliconFlow(messages, config = AI_CONFIG.SILICONFLOW, overrides = {}) {
     try {
       const url = Platform.OS === 'web'
         ? `${WEB_PROXY_CONFIG.BASE_URL}/api/ai/siliconflow`
         : `${config.BASE_URL}/chat/completions`;
+
+      const maxTokens = overrides.max_tokens ?? config.MAX_TOKENS;
+      const temperature =
+        typeof overrides.temperature === 'number' ? overrides.temperature : 0.7;
 
       const body = {
         model: config.MODEL,
@@ -23,9 +29,18 @@ export class AIService {
           role: msg.role,
           content: msg.content,
         })),
-        max_tokens: config.MAX_TOKENS,
-        temperature: 0.7,
+        max_tokens: maxTokens,
+        temperature,
       };
+      if (typeof overrides.frequency_penalty === 'number') {
+        body.frequency_penalty = overrides.frequency_penalty;
+      }
+      if (typeof overrides.presence_penalty === 'number') {
+        body.presence_penalty = overrides.presence_penalty;
+      }
+      if (typeof overrides.top_p === 'number') {
+        body.top_p = overrides.top_p;
+      }
 
       const headers = {
         'Content-Type': 'application/json',
@@ -74,7 +89,13 @@ export class AIService {
     // 调用硅基流动
     const service = enabledServices[0];
     if (service === AI_CONFIG.SILICONFLOW) {
-      return await this.callSiliconFlow(messages, service);
+      const overrides = {};
+      if (typeof options.maxTokens === 'number') overrides.max_tokens = options.maxTokens;
+      if (typeof options.temperature === 'number') overrides.temperature = options.temperature;
+      if (typeof options.frequencyPenalty === 'number') overrides.frequency_penalty = options.frequencyPenalty;
+      if (typeof options.presencePenalty === 'number') overrides.presence_penalty = options.presencePenalty;
+      if (typeof options.topP === 'number') overrides.top_p = options.topP;
+      return await this.callSiliconFlow(messages, service, overrides);
     }
 
     throw new Error('AI服务调用失败，请检查网络连接和API配置');
@@ -195,28 +216,28 @@ ${medicineList}
    * 生成个性化健康建议
    */
   static async generatePersonalizedAdvice(userData) {
-    const prompt = `你是一位专业的健康管理专家。请根据用户的健康数据，生成个性化的健康建议：
+    const summary = buildHealthAdviceSummary(userData || {});
+    const prompt = `下面是用户在本应用中产生的健康数据摘要（已做统计聚合；请勿编造未在摘要中出现的数值或怪异日期）。
 
-用户健康数据：
-- 心率数据：${JSON.stringify(userData.heartRate || [])}
-- 血糖数据：${JSON.stringify(userData.bloodGlucose || [])}
-- 睡眠数据：${JSON.stringify(userData.sleep || [])}
-- 管理药品：${JSON.stringify(userData.medicines || [])}
-- 服药依从性：${JSON.stringify(userData.adherence || {})}
+${summary}
 
-请提供：
-1. 基于数据的健康趋势分析
-2. 个性化的生活方式建议
-3. 饮食建议
-4. 运动建议
-5. 用药管理建议
+请撰写一篇「个性化健康建议」（全文使用简体中文），不必采用僵硬的条文编号模板，可自行分段，读来自然连贯即可。
 
-请用中文回答，建议要具体、可操作、个性化。`;
+内容上请详尽、可读：对心率、血糖、睡眠（及用药若有）基于摘要逐一解读；能综合则说明指标间呼应，不能则说明数据局限；再给生活方式与自我管理建议；涉及用药与安全时提示遵医嘱并及时就医。
+
+**强制遵守（违者视为不合格输出）：**
+- 禁止使用「解析」一词作为填充语，禁止同一短词无限重复或以逗号刷屏；禁止连续写出三个以上标点（句号、逗号等均不可堆叠）。
+- 禁止抄写或输出与本任务无关的应用界面文案（例如底部导航「首页」「药品」「设备」「报告」等）。
+- 数字格式规范：平均值等写「72.8」形式，禁止使用「72..8」或错乱小数点。
+- 若某段难以续写应在自然收尾处停止，不可用无意义词句凑字数。
+
+其余：只引用摘要中的数字与时间；数据不足则说明如何补充监测；不进行医学诊断。`;
 
     const messages = [
       {
         role: 'system',
-        content: '你是一位专业的健康管理专家，擅长根据个人健康数据提供个性化的健康建议。',
+        content:
+          '你是资深健康顾问：根据摘要写建议，文风自然口语化与书面语皆可，但禁止灌水、复读、堆标点。不写应用导航或 OCR 占位词。',
       },
       {
         role: 'user',
@@ -224,7 +245,14 @@ ${medicineList}
       },
     ];
 
-    return await this.callAI(messages);
+    const raw = await this.callAI(messages, {
+      maxTokens: 2000,
+      temperature: 0.2,
+      frequencyPenalty: 0.6,
+      presencePenalty: 0.35,
+      topP: 0.88,
+    });
+    return sanitizeHealthAdviceText(raw);
   }
 
   /**
