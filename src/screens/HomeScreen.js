@@ -171,6 +171,27 @@ export default function HomeScreen({ navigation, onLogout }) {
           </Card.Content>
         </Card>
 
+        <Card
+          style={styles.card}
+          onPress={() => {
+            if (Platform.OS === 'web') {
+              window.location.assign('http://localhost:5173');
+            } else {
+              Alert.alert('提示', '该功能仅支持 Web 端');
+            }
+          }}
+        >
+          <Card.Content>
+            <View style={styles.cardHeader}>
+              <Ionicons name="leaf" size={32} color={theme.colors.primary} />
+              <Title style={styles.cardTitle}>AI舌诊</Title>
+            </View>
+            <Paragraph style={styles.cardDescription}>
+              进入中医舌诊页面
+            </Paragraph>
+          </Card.Content>
+        </Card>
+
         <View style={styles.quickActions}>
           <Button
             mode="contained"

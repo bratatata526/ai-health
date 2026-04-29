@@ -26,3 +26,24 @@ dist/
 
 *.md
 !README.md
+
+# TongueDiagnosis
+TongueDiagnosis/venv
+TongueDiagnosis/.idea
+TongueDiagnosis/frontend/node_modules
+TongueDiagnosis/__pycache__
+TongueDiagnosis/frontend/public/tongue
+TongueDiagnosis/frontend/dist
+TongueDiagnosis/application/net/weights/
+TongueDiagnosis/node_modules
+TongueDiagnosis/AppDatabase.db
+TongueDiagnosis/*.db
+TongueDiagnosis/.env
+TongueDiagnosis/server.out.log
+TongueDiagnosis/server.err.log
+TongueDiagnosis/*.exe
+TongueDiagnosis/*.dmg
+TongueDiagnosis/*.pkg
+TongueDiagnosis/*.zip
+TongueDiagnosis/*.7z
+TongueDiagnosis/*.tar.gz
