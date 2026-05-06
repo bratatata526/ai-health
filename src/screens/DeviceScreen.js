@@ -15,7 +15,6 @@ import {
   Paragraph,
   Button,
   Text,
-  Chip,
   SegmentedButtons,
   Snackbar,
 } from 'react-native-paper';
@@ -130,7 +129,7 @@ function SleepDashedGrid({ height, bottomInset, stroke, nDays }) {
 
 export default function DeviceScreen() {
   const [devices, setDevices] = useState([]);
-  const [nearbyDevices, setNearbyDevices] = useState([]);
+  const [discoveredBracelets, setDiscoveredBracelets] = useState([]);
   const [scanning, setScanning] = useState(false);
   const [connectingDeviceId, setConnectingDeviceId] = useState(null);
   const [liveHeartRate, setLiveHeartRate] = useState(null);
@@ -293,26 +292,98 @@ export default function DeviceScreen() {
     loadData();
   };
 
+  const mergeDeviceList = () => {
+    const merged = new Map();
+
+    discoveredBracelets.forEach((item) => {
+      if (!item?.id) return;
+      merged.set(item.id, {
+        id: item.id,
+        type: 'bracelet',
+        name: item.name || '心率设备',
+        connected: false,
+        battery: item.battery ?? null,
+        _webDevice: item._webDevice,
+      });
+    });
+
+    devices.forEach((item) => {
+      if (!item?.id) return;
+      const existing = merged.get(item.id) || {};
+      merged.set(item.id, {
+        ...existing,
+        ...item,
+        _webDevice: existing._webDevice || item._webDevice,
+      });
+    });
+
+    return Array.from(merged.values());
+  };
+
+  const shownDevices = mergeDeviceList();
+
   const startScan = async () => {
     try {
-      if (Platform.OS === 'web') {
-        Alert.alert('提示', '蓝牙连接仅支持安卓/iOS手机端，请使用开发版App测试');
-        return;
-      }
       const granted = await bleHeartRateService.requestPermissions();
       if (!granted) {
-        Alert.alert('权限不足', '请允许蓝牙权限后再扫描设备');
+        Alert.alert(
+          '无法使用蓝牙',
+          Platform.OS === 'web'
+            ? '当前浏览器不支持 Web Bluetooth。请使用 Chrome/Edge 并通过 HTTPS 或 localhost 打开应用。'
+            : '请允许蓝牙权限后再扫描设备'
+        );
         return;
       }
 
-      setNearbyDevices([]);
       setScanning(true);
+
+      if (Platform.OS === 'web') {
+        await bleHeartRateService.scanHeartRateDevices(
+          (device) => {
+            setDiscoveredBracelets((prev) => {
+              const idx = prev.findIndex((item) => item.id === device.id);
+              const normalized = {
+                id: device.id,
+                name: device.name,
+                type: 'bracelet',
+                connected: false,
+                battery: device.battery ?? null,
+                _webDevice: device._webDevice,
+              };
+              if (idx < 0) return [...prev, normalized];
+              const next = [...prev];
+              next[idx] = { ...next[idx], ...normalized };
+              return next;
+            });
+            setScanning(false);
+          },
+          (error) => {
+            console.error('扫描设备失败:', error);
+            Alert.alert('扫描失败', error?.message || '浏览器蓝牙扫描异常');
+            setScanning(false);
+          }
+        );
+        setScanning(false);
+        return;
+      }
 
       bleHeartRateService.scanHeartRateDevices(
         (device) => {
-          setNearbyDevices((prev) => {
-            if (prev.some((item) => item.id === device.id)) return prev;
-            return [...prev, device];
+          setDiscoveredBracelets((prev) => {
+            const idx = prev.findIndex((item) => item.id === device.id);
+            const normalized = {
+              id: device.id,
+              name: device.name,
+              type: 'bracelet',
+              connected: false,
+              battery: device.battery ?? null,
+              rssi: device.rssi,
+              _webDevice: device._webDevice,
+            };
+            if (idx < 0) return [...prev, normalized];
+            const next = [...prev];
+            next[idx] = { ...next[idx], ...normalized };
+            return next;
           });
         },
         (error) => {
@@ -340,7 +411,7 @@ export default function DeviceScreen() {
     try {
       setConnectingDeviceId(device.id);
       const connectedDevice = await bleHeartRateService.connectAndMonitorHeartRate(
-        device.id,
+        device._webDevice || device.id,
         (bpm) => {
           applyLiveHeartRate(bpm);
         }
@@ -350,6 +421,18 @@ export default function DeviceScreen() {
         ...connectedDevice,
         name: device.name || connectedDevice.name,
       });
+      setDiscoveredBracelets((prev) =>
+        prev.map((item) =>
+          item.id === device.id
+            ? {
+                ...item,
+                connected: true,
+                battery: connectedDevice.battery ?? item.battery ?? null,
+                _webDevice: item._webDevice || device._webDevice,
+              }
+            : item
+        )
+      );
       await loadData();
       Alert.alert('连接成功', `已连接 ${device.name}，正在接收实时心率`);
     } catch (error) {
@@ -368,6 +451,11 @@ export default function DeviceScreen() {
       heartRateAlertMonitor.reset();
       await bleHeartRateService.disconnectCurrentDevice();
       await DeviceService.removeDevice(deviceId);
+      setDiscoveredBracelets((prev) =>
+        prev.map((item) =>
+          item.id === deviceId ? { ...item, connected: false } : item
+        )
+      );
       setLiveHeartRate(null);
       await loadData();
     } catch (error) {
@@ -527,12 +615,12 @@ export default function DeviceScreen() {
                 连接血糖仪
               </Button>
             </View>
-            {devices.length === 0 ? (
+            {shownDevices.length === 0 ? (
               <View style={styles.emptyDevices}>
                 <Paragraph style={styles.emptyText}>暂无连接设备</Paragraph>
               </View>
             ) : (
-              devices.map((device) => (
+              shownDevices.map((device) => (
                 <View key={device.id} style={styles.deviceItem}>
                   <View style={styles.deviceInfo}>
                     <Ionicons
@@ -547,21 +635,25 @@ export default function DeviceScreen() {
                       </Text>
                     </View>
                   </View>
-                  <Chip
-                    icon="battery-charging"
-                    style={styles.batteryChip}
-                  >
-                    {device.battery}%
-                  </Chip>
-                  {(device.type === 'bracelet' ||
-                    device.type === 'glucometer') && (
+                  {device.type === 'bracelet' && (
+                    <Button
+                      mode={device.connected ? 'text' : 'contained'}
+                      compact={!device.connected}
+                      onPress={() =>
+                        device.connected
+                          ? disconnectHeartRateDevice(device.id)
+                          : connectHeartRateDevice(device)
+                      }
+                      disabled={!!connectingDeviceId}
+                      loading={connectingDeviceId === device.id}
+                    >
+                      {device.connected ? '断开' : '连接'}
+                    </Button>
+                  )}
+                  {device.type === 'glucometer' && (
                     <Button
                       mode="text"
-                      onPress={() =>
-                        device.type === 'bracelet'
-                          ? disconnectHeartRateDevice(device.id)
-                          : disconnectGlucometerDevice(device.id)
-                      }
+                      onPress={() => disconnectGlucometerDevice(device.id)}
                     >
                       断开
                     </Button>
@@ -570,33 +662,14 @@ export default function DeviceScreen() {
               ))
             )}
 
-            {nearbyDevices.length > 0 && (
-              <View style={styles.nearbySection}>
-                <Text style={styles.nearbyTitle}>可连接手环</Text>
-                {nearbyDevices.map((device) => (
-                  <View key={device.id} style={styles.nearbyDeviceItem}>
-                    <View style={styles.nearbyDeviceInfo}>
-                      <Text style={styles.deviceName}>{device.name}</Text>
-                      <Text style={styles.deviceStatus}>信号: {device.rssi} dBm</Text>
-                    </View>
-                    <Button
-                      mode="contained"
-                      compact
-                      onPress={() => connectHeartRateDevice(device)}
-                      disabled={!!connectingDeviceId}
-                      loading={connectingDeviceId === device.id}
-                    >
-                      连接
-                    </Button>
-                  </View>
-                ))}
-              </View>
-            )}
-
             {scanning && (
               <View style={styles.scanHint}>
                 <ActivityIndicator size="small" color={theme.colors.primary} />
-                <Text style={styles.scanHintText}>请保持手环亮屏并靠近手机</Text>
+                <Text style={styles.scanHintText}>
+                  {Platform.OS === 'web'
+                    ? '请在浏览器蓝牙弹窗中选择手环'
+                    : '请保持手环亮屏并靠近手机'}
+                </Text>
                 <Button mode="text" compact onPress={stopScan}>
                   停止扫描
                 </Button>
@@ -1256,9 +1329,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginTop: 2,
-  },
-  batteryChip: {
-    backgroundColor: theme.colors.surfaceVariant,
   },
   nearbySection: {
     marginTop: theme.spacing.md,
