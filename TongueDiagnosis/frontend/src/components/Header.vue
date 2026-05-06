@@ -1,5 +1,9 @@
+<script setup>
+const isInIframe = typeof window !== 'undefined' && window.self !== window.top
+</script>
+
 <template>
-  <header class="header">
+  <header v-if="!isInIframe" class="header">
     <div class="inner">
       <div class="brand">Tongue Diagnosis</div>
       <div class="sub">AI 舌相检测</div>

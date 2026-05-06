@@ -17,6 +17,7 @@ import DeviceScreen from './src/screens/DeviceScreen';
 import ReportScreen from './src/screens/ReportScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import AIScreen from './src/screens/AIScreen';
+import TongueScreen from './src/screens/TongueScreen';
 import AIIcon from './src/components/AIIcon';
 import FloatingAIAssistant from './src/components/FloatingAIAssistant';
 import { theme, appFontFamilies } from './src/theme';
@@ -245,6 +246,8 @@ export default function App() {
                   iconName = focused ? 'medical' : 'medical-outline';
                 } else if (route.name === '设备') {
                   iconName = focused ? 'watch' : 'watch-outline';
+                } else if (route.name === '舌诊') {
+                  iconName = focused ? 'scan' : 'scan-outline';
                 } else if (route.name === '报告') {
                   iconName = focused ? 'document-text' : 'document-text-outline';
                 }
@@ -278,6 +281,7 @@ export default function App() {
             </Tab.Screen>
             <Tab.Screen name="药品" component={MedicineScreen} />
             <Tab.Screen name="设备" component={DeviceScreen} />
+            <Tab.Screen name="舌诊" component={TongueScreen} />
             <Tab.Screen name="AI助手" component={AIScreen} />
             <Tab.Screen name="报告" component={ReportScreen} />
           </Tab.Navigator>

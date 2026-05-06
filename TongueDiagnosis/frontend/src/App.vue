@@ -1,11 +1,13 @@
 <script setup>
 import Header from '@/components/Header.vue'
 import Check from '@/views/Check.vue'
+
+const isInIframe = typeof window !== 'undefined' && window.self !== window.top
 </script>
 <template>
   <div class="app-container">
     <Header></Header>
-    <main class="main-content">
+    <main class="main-content" :style="{ paddingTop: isInIframe ? '0px' : '72px' }">
       <Check></Check>
     </main>
   </div>
@@ -31,13 +33,12 @@ body {
 }
 
 .main-content {
-  padding-top: 72px;
   min-height: 100vh;
   position: relative;
   z-index: 1;
 }
 
 .main-content > * {
-  min-height: calc(100vh - 72px);
+  min-height: 100vh;
 }
 </style>
