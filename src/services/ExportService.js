@@ -12,6 +12,15 @@ import { buildHealthReportPdfHtml } from '../utils/reportPdfHtml';
 const MIME_XLSX =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+/** UTF-8 BOM：便于 Excel（尤其英文区域 Windows）将 CSV 识别为 UTF-8，避免中文乱码 */
+const UTF8_BOM = '\uFEFF';
+
+function ensureCsvUtf8Bom(content) {
+  const s = typeof content === 'string' ? content : '';
+  if (s.length > 0 && s.charCodeAt(0) === 0xfeff) return s;
+  return UTF8_BOM + s;
+}
+
 /** 健康报告 PDF：健康报告-2026年5月6日11时2分.pdf（与导出时刻一致，本地时区） */
 function buildHealthReportPdfFilename(at = new Date()) {
   const y = at.getFullYear();
@@ -375,12 +384,17 @@ export class ExportService {
    */
   static async shareFile(content, filename, mimeType = 'text/plain') {
     try {
+      const isCsv =
+        mimeType === 'text/csv' ||
+        (filename && String(filename).toLowerCase().endsWith('.csv'));
+      const payload = isCsv ? ensureCsvUtf8Bom(content) : content;
+
       if (Platform.OS === 'web') {
         // Web平台：使用下载
-        return await this.saveFileToDevice(content, filename, mimeType);
+        return await this.saveFileToDevice(payload, filename, mimeType);
       } else {
         // 移动端：先保存文件，然后分享
-        const result = await this.saveFileToDevice(content, filename, mimeType);
+        const result = await this.saveFileToDevice(payload, filename, mimeType);
         if (result.success && result.fileUri) {
           await Share.share({
             url: result.fileUri,
