@@ -1,11 +1,26 @@
 import { DeviceService } from './DeviceService';
 import { MedicineService } from './MedicineService';
 import { ReportService } from './ReportService';
+import { AuthService } from './AuthService';
+import { AIService } from './AIService';
+import { PersonalizedAdviceCache } from './PersonalizedAdviceCache';
 import * as FileSystem from 'expo-file-system';
+import * as Print from 'expo-print';
 import { Platform, Share } from 'react-native';
+import { buildHealthReportPdfHtml } from '../utils/reportPdfHtml';
 
 const MIME_XLSX =
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** 健康报告 PDF：健康报告-2026年5月6日11时2分.pdf（与导出时刻一致，本地时区） */
+function buildHealthReportPdfFilename(at = new Date()) {
+  const y = at.getFullYear();
+  const m = at.getMonth() + 1;
+  const d = at.getDate();
+  const h = at.getHours();
+  const min = at.getMinutes();
+  return `健康报告-${y}年${m}月${d}日${h}时${min}分.pdf`;
+}
 
 /**
  * 数据导出服务
@@ -148,9 +163,9 @@ export class ExportService {
   /**
    * 导出健康报告为文本格式
    */
-  static async exportReportToText(reportType = 'week') {
+  static async exportReportToText(reportType = 'week', useAI = false) {
     try {
-      const report = await ReportService.generateReport(reportType);
+      const report = await ReportService.generateReport(reportType, useAI);
       
       let text = `健康报告 - ${report.period}\n`;
       text += `生成时间: ${new Date(report.generatedAt).toLocaleString('zh-CN')}\n\n`;
@@ -171,6 +186,118 @@ export class ExportService {
       console.error('导出报告失败:', error);
       throw error;
     }
+  }
+
+  /**
+   * 导出健康报告为 PDF（HTML → expo-print）
+   * @param {string} reportType
+   * @param {{ useAI?: boolean }} options
+   */
+  static async exportReportToPdf(reportType = 'week', options = {}) {
+    const { useAI = false } = options;
+    const profile = await AuthService.getProfile();
+    const displayName =
+      profile?.name ||
+      profile?.email ||
+      '用户';
+
+    const reportPromise = ReportService.generateReport(reportType, useAI);
+
+    const assistantAdvicePromise = (async () => {
+      try {
+        const cached = await PersonalizedAdviceCache.get();
+        if (cached?.text && cached.text.trim().length > 0) {
+          return cached.text.trim();
+        }
+        const healthData = await DeviceService.getHealthData();
+        const medicines = await MedicineService.getAllMedicines();
+        const userData = {
+          heartRate: healthData?.heartRate || [],
+          bloodGlucose: healthData?.bloodGlucose || [],
+          sleep: healthData?.sleep || [],
+          medicines: medicines || [],
+        };
+        const text = await AIService.generatePersonalizedAdvice(userData);
+        const trimmed = (text || '').trim();
+        if (trimmed) await PersonalizedAdviceCache.set(trimmed);
+        return trimmed;
+      } catch (e) {
+        console.warn('导出 PDF：自动生成个性化建议失败', e);
+        return '';
+      }
+    })();
+
+    const [report, assistantAdvice] = await Promise.all([
+      reportPromise,
+      assistantAdvicePromise,
+    ]);
+
+    const exportedAt = new Date();
+    const generatedAtDisplay = exportedAt.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const html = buildHealthReportPdfHtml({
+      displayName,
+      report,
+      assistantAdvice,
+      generatedAtDisplay,
+    });
+
+    const filename = buildHealthReportPdfFilename(exportedAt);
+
+    if (Platform.OS === 'web') {
+      try {
+        const w =
+          typeof globalThis !== 'undefined' && globalThis.window
+            ? globalThis.window.open('', '_blank')
+            : null;
+        if (w && w.document) {
+          w.document.open();
+          w.document.write(html);
+          w.document.close();
+          w.focus();
+          w.print();
+          return {
+            success: true,
+            message: '请在打印对话框中选择「另存为 PDF」保存报告',
+          };
+        }
+      } catch (e) {
+        console.error('Web 导出 PDF 失败:', e);
+      }
+      return {
+        success: false,
+        message: '无法打开打印窗口，请允许弹出窗口后重试',
+      };
+    }
+
+    const result = await Print.printToFileAsync({
+      html,
+      base64: true,
+      width: 612,
+      height: 792,
+    });
+
+    const rawBase64 = result.base64;
+    if (rawBase64 && typeof rawBase64 === 'string') {
+      return await this.shareBase64File(rawBase64, filename, 'application/pdf');
+    }
+
+    if (result.uri) {
+      await Share.share({
+        url: result.uri,
+        title: filename,
+        message: `分享文件: ${filename}`,
+      });
+      return { success: true, fileUri: result.uri, message: '已生成 PDF，可通过分享保存' };
+    }
+
+    throw new Error('无法生成 PDF 文件');
   }
 
   /**
@@ -323,19 +450,28 @@ export class ExportService {
 
   /**
    * 导出健康报告（完整流程）
+   * @param {string} reportType
+   * @param {'pdf'|'txt'} format 默认 pdf
+   * @param {{ useAI?: boolean }} exportOptions
    */
-  static async exportReport(reportType = 'week', format = 'txt') {
+  static async exportReport(reportType = 'week', format = 'pdf', exportOptions = {}) {
     try {
+      const { useAI = false } = exportOptions;
+
+      if (format === 'pdf') {
+        return await this.exportReportToPdf(reportType, { useAI });
+      }
+
       let content, filename, mimeType;
-      
+
       if (format === 'txt') {
-        content = await this.exportReportToText(reportType);
+        content = await this.exportReportToText(reportType, useAI);
         filename = `健康报告_${reportType === 'week' ? '周' : '月'}_${new Date().toISOString().split('T')[0]}.txt`;
         mimeType = 'text/plain';
       } else {
         throw new Error('不支持的格式');
       }
-      
+
       return await this.shareFile(content, filename, mimeType);
     } catch (error) {
       console.error('导出报告失败:', error);

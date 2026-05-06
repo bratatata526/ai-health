@@ -1,4 +1,5 @@
 import { CLOUD_CONFIG } from '../config/cloud';
+import { PersonalizedAdviceCache } from './PersonalizedAdviceCache';
 import { SecureStorage } from '../utils/secureStorage';
 
 const AUTH_TOKEN_KEY = '@auth_token';
@@ -102,6 +103,7 @@ export class AuthService {
     for (const key of keysToRemove) {
       await SecureStorage.removeItem(key, { silent: true });
     }
+    await PersonalizedAdviceCache.clear();
   }
 
   static async changePassword({ oldPassword, newPassword }) {

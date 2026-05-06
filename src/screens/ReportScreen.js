@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   StyleSheet,
@@ -15,15 +16,17 @@ import {
   Text,
   SegmentedButtons,
   ProgressBar,
-  Divider,
   Switch,
   ActivityIndicator,
 } from 'react-native-paper';
-import { LineChart, BarChart } from 'react-native-chart-kit';
+import { LineChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 import { theme, textStyles } from '../theme';
 import { ReportService } from '../services/ReportService';
 import { ExportService } from '../services/ExportService';
+import { AuthService } from '../services/AuthService';
+import { PersonalizedAdviceCache } from '../services/PersonalizedAdviceCache';
+import { AI_DISCLAIMER_ZH } from '../constants/aiDisclaimer';
 import { Alert } from 'react-native';
 
 const { width } = Dimensions.get('window');
@@ -34,23 +37,52 @@ export default function ReportScreen() {
   const [loading, setLoading] = useState(false);
   const [useAI, setUseAI] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [assistantAdvice, setAssistantAdvice] = useState('');
+
+  const refreshAssistantAdvice = useCallback(async () => {
+    try {
+      const c = await PersonalizedAdviceCache.get();
+      setAssistantAdvice(c?.text || '');
+    } catch {
+      setAssistantAdvice('');
+    }
+  }, []);
 
   useEffect(() => {
-    loadReport();
-  }, [reportType, useAI]);
+    (async () => {
+      try {
+        const p = await AuthService.getProfile();
+        setProfile(p);
+      } catch {
+        setProfile(null);
+      }
+    })();
+  }, []);
 
-  const loadReport = async () => {
+  useFocusEffect(
+    useCallback(() => {
+      refreshAssistantAdvice();
+    }, [refreshAssistantAdvice])
+  );
+
+  const loadReport = useCallback(async () => {
     setLoading(true);
     try {
       const data = await ReportService.generateReport(reportType, useAI);
       setReport(data);
+      await refreshAssistantAdvice();
     } catch (error) {
       console.error('加载报告失败:', error);
       Alert.alert('错误', '生成报告失败，请重试');
     } finally {
       setLoading(false);
     }
-  };
+  }, [reportType, useAI, refreshAssistantAdvice]);
+
+  useEffect(() => {
+    loadReport();
+  }, [loadReport]);
 
   const shareReport = async () => {
     try {
@@ -71,9 +103,13 @@ export default function ReportScreen() {
 
   const exportReport = async () => {
     try {
-      const result = await ExportService.exportReport(reportType, 'txt');
-      if (result.success) {
+      const result = await ExportService.exportReport(reportType, 'pdf', {
+        useAI,
+      });
+      if (result?.success) {
         Alert.alert('成功', result.message || '报告已导出');
+      } else {
+        Alert.alert('提示', result?.message || '导出未完成');
       }
     } catch (error) {
       Alert.alert('错误', '导出报告失败，请重试');
@@ -139,6 +175,10 @@ export default function ReportScreen() {
                 disabled={loading || aiLoading}
               />
             </View>
+            <Paragraph style={styles.userMeta}>
+              用户：
+              {profile?.name || profile?.email || '未登录 / 本地用户'}
+            </Paragraph>
           </Card.Content>
         </Card>
 
@@ -246,28 +286,52 @@ export default function ReportScreen() {
                 <Ionicons name="sparkles" size={24} color={theme.colors.primary} />
                 <Title style={styles.sectionTitle}>AI深度分析</Title>
               </View>
+              <Text style={styles.aiDisclaimer}>{AI_DISCLAIMER_ZH}</Text>
               <Text style={styles.aiAnalysisText}>{report.aiAnalysis}</Text>
             </Card.Content>
           </Card>
         )}
 
-        {/* 健康建议 */}
+        {/* 健康建议 / 规则简要提示（与 PDF 逻辑一致） */}
         <Card style={styles.card}>
           <Card.Content>
-            <Title style={styles.sectionTitle}>健康建议</Title>
-            {report.recommendations.map((rec, index) => (
-              <View key={index} style={styles.recommendationItem}>
-                <Ionicons
-                  name="checkmark-circle"
-                  size={20}
-                  color={theme.colors.success}
-                  style={styles.recommendationIcon}
-                />
-                <Text style={styles.recommendationText}>{rec}</Text>
-              </View>
-            ))}
+            <Title style={styles.sectionTitle}>
+              {assistantAdvice.trim().length > 0
+                ? '健康建议（AI 助手个性化建议）'
+                : '简要提示（规则引擎）'}
+            </Title>
+            {assistantAdvice.trim().length > 0 ? (
+              <>
+                <Text style={styles.aiDisclaimer}>{AI_DISCLAIMER_ZH}</Text>
+                <Text style={styles.assistantAdviceText}>{assistantAdvice.trim()}</Text>
+              </>
+            ) : (
+              <>
+                <Paragraph style={styles.adviceHint}>
+                  尚未在「AI 助手 › 建议」中生成个性化建议；以下为应用规则生成的简要提示。
+                </Paragraph>
+                {report.recommendations.map((rec, index) => (
+                  <View key={index} style={styles.recommendationItem}>
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={20}
+                      color={theme.colors.success}
+                      style={styles.recommendationIcon}
+                    />
+                    <Text style={styles.recommendationText}>{rec}</Text>
+                  </View>
+                ))}
+              </>
+            )}
           </Card.Content>
         </Card>
+
+        <Paragraph style={styles.reportGeneratedAt}>
+          报告数据生成时间：
+          {report.generatedAt
+            ? new Date(report.generatedAt).toLocaleString('zh-CN')
+            : ''}
+        </Paragraph>
 
         {/* 操作按钮 */}
         <View style={styles.actionButtons}>
@@ -475,6 +539,43 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     lineHeight: 22,
     textAlign: 'justify',
+  },
+  aiDisclaimer: {
+    ...textStyles.body,
+    fontSize: 12,
+    color: '#b45309',
+    backgroundColor: '#fffbeb',
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    padding: theme.spacing.sm,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.md,
+    lineHeight: 18,
+  },
+  assistantAdviceText: {
+    ...textStyles.body,
+    fontSize: 14,
+    color: theme.colors.text,
+    lineHeight: 22,
+    textAlign: 'justify',
+  },
+  adviceHint: {
+    ...textStyles.body,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.spacing.sm,
+  },
+  userMeta: {
+    ...textStyles.body,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    marginTop: theme.spacing.sm,
+  },
+  reportGeneratedAt: {
+    ...textStyles.body,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: theme.spacing.sm,
   },
 });
 

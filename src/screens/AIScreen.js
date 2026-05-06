@@ -20,6 +20,8 @@ import { theme, appFontFamilies } from '../theme';
 import { AIService } from '../services/AIService';
 import { MedicineService } from '../services/MedicineService';
 import { DeviceService } from '../services/DeviceService';
+import { PersonalizedAdviceCache } from '../services/PersonalizedAdviceCache';
+import { AI_DISCLAIMER_ZH } from '../constants/aiDisclaimer';
 
 /** Dialog 使用 MD3 elevation.level3（主题里常为淡紫Tint），此处强制纯白底与卡片一致，避免看起来像「透明无底」 */
 const dialogSurfaceTheme = {
@@ -71,6 +73,17 @@ export default function AIScreen() {
         setMedicines(ms || []);
       } catch {
         setMedicines([]);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const cached = await PersonalizedAdviceCache.get();
+        if (cached?.text) setAdviceText(cached.text);
+      } catch {
+        // ignore
       }
     })();
   }, []);
@@ -145,6 +158,7 @@ export default function AIScreen() {
       };
       const text = await AIService.generatePersonalizedAdvice(userData);
       setAdviceText(text);
+      await PersonalizedAdviceCache.set(text);
     } catch (e) {
       setAdviceText(`调用AI失败：${e?.message || '请检查网络/配置后重试'}`);
     } finally {
@@ -297,6 +311,7 @@ export default function AIScreen() {
             {adviceText ? (
               <ScrollView style={styles.resultBox}>
                 <Text style={styles.resultText}>{adviceText}</Text>
+                <Paragraph style={styles.adviceDisclaimer}>{AI_DISCLAIMER_ZH}</Paragraph>
               </ScrollView>
             ) : null}
           </Card.Content>
@@ -468,6 +483,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     color: theme.colors.text,
+  },
+  adviceDisclaimer: {
+    fontFamily: appFontFamilies.regular,
+    fontSize: 11,
+    lineHeight: 17,
+    color: '#b45309',
+    marginTop: theme.spacing.sm,
   },
   dialogLoading: {
     alignItems: 'center',
