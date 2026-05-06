@@ -238,10 +238,10 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
       onMoveShouldSetPanResponder: (evt, gs) =>
         !isWebSecondaryPointer(evt) &&
         (Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5),
+      // 勿在此处 hideMenu：菜单项在本容器内，Grant 会先执行导致菜单立刻卸载，onPress 无法触发跳转（方案 A）
       onPanResponderGrant: () => {
         isDragging.current = false;
         if (bubbleVisibleRef.current) hideBubble();
-        if (menuVisibleRef.current) hideMenu();
       },
       onPanResponderMove: (_, gs) => {
         if (Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5) {
@@ -302,15 +302,6 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
         styles.container,
         { transform: [{ translateX: panX }, { translateY: panY }] },
       ]}
-      {...panResponder.panHandlers}
-      {...(Platform.OS === 'web'
-        ? {
-            onContextMenu,
-            onPointerDown: webAttachPointerCapture,
-            onPointerUp: webReleasePointerCapture,
-            onPointerCancel: webReleasePointerCapture,
-          }
-        : {})}
     >
       {/* 信息气泡 */}
       {showBubble && (
@@ -334,7 +325,23 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
         </Animated.View>
       )}
 
-      {/* 右键菜单 */}
+      {/* 仅头像绑定 PanResponder / Web 捕获与右键，避免抢走菜单点击（方案 B） */}
+      <Animated.View
+        style={[styles.iconWrapper, { transform: [{ scale: breathAnim }] }]}
+        {...panResponder.panHandlers}
+        {...(Platform.OS === 'web'
+          ? {
+              onContextMenu,
+              onPointerDown: webAttachPointerCapture,
+              onPointerUp: webReleasePointerCapture,
+              onPointerCancel: webReleasePointerCapture,
+            }
+          : {})}
+      >
+        <DoctorAvatar size={ICON_SIZE} />
+      </Animated.View>
+
+      {/* 菜单置于头像之后并提高 zIndex，保证命中菜单而非下层头像 */}
       {showMenu && (
         <Animated.View
           style={[
@@ -369,16 +376,6 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
           />
         </Animated.View>
       )}
-
-      {/* 图标 */}
-      <Animated.View
-        style={[
-          styles.iconWrapper,
-          { transform: [{ scale: breathAnim }] },
-        ]}
-      >
-        <DoctorAvatar size={ICON_SIZE} />
-      </Animated.View>
     </Animated.View>
   );
 }
@@ -393,10 +390,7 @@ const styles = StyleSheet.create({
     zIndex: 9999,
     ...Platform.select({
       web: {
-        cursor: 'pointer',
         willChange: 'transform',
-        userSelect: 'none',
-        touchAction: 'none',
       },
       default: {},
     }),
@@ -405,6 +399,7 @@ const styles = StyleSheet.create({
     width: ICON_SIZE,
     height: ICON_SIZE,
     borderRadius: ICON_SIZE / 2,
+    zIndex: 10,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -418,6 +413,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.25,
         shadowRadius: 8,
         shadowOffset: { width: 0, height: 4 },
+        cursor: 'pointer',
         userSelect: 'none',
         touchAction: 'none',
       },
@@ -428,6 +424,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     minWidth: 200,
     maxWidth: BUBBLE_WIDTH,
+    zIndex: 40,
     backgroundColor: BUBBLE_BG,
     borderRadius: 10,
     paddingHorizontal: 14,
@@ -442,7 +439,7 @@ const styles = StyleSheet.create({
         shadowRadius: 6,
         shadowOffset: { width: 0, height: 2 },
         userSelect: 'none',
-        touchAction: 'none',
+        touchAction: 'manipulation',
       },
     }),
   },
@@ -486,20 +483,21 @@ const styles = StyleSheet.create({
   menu: {
     position: 'absolute',
     width: 160,
+    zIndex: 100,
     backgroundColor: BUBBLE_BG,
     borderRadius: 10,
     paddingVertical: 4,
     bottom: -10,
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
-      android: { elevation: 6 },
+      android: { elevation: 16 },
       web: {
         shadowColor: '#000',
         shadowOpacity: 0.18,
         shadowRadius: 8,
         shadowOffset: { width: 0, height: 3 },
-        userSelect: 'none',
-        touchAction: 'none',
+        cursor: 'default',
+        touchAction: 'manipulation',
       },
     }),
   },
