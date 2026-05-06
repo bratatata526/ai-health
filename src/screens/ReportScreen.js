@@ -90,6 +90,17 @@ export default function ReportScreen() {
         `平均心率: ${report.avgHeartRate} bpm\n` +
         `平均血糖: ${report.avgBloodGlucose} mmol/L\n` +
         `平均睡眠: ${report.avgSleep} 小时\n` +
+        (() => {
+          const ss = report.sleepStages || {};
+          const line = (label, v) =>
+            `${label}: ${v != null ? `${v} 小时` : '暂无数据'}`;
+          return (
+            `${line('平均深睡', ss.deep)}\n` +
+            `${line('平均浅睡', ss.light)}\n` +
+            `${line('平均 REM', ss.rem)}\n` +
+            `${line('平均清醒', ss.awake)}\n`
+          );
+        })() +
         `健康评分: ${report.healthScore}/100`;
       
       await Share.share({
@@ -220,6 +231,31 @@ export default function ReportScreen() {
                 <Text style={styles.overviewValue}>{report.avgSleep}</Text>
                 <Text style={styles.overviewLabel}>平均睡眠 (小时)</Text>
               </View>
+            </View>
+            <Paragraph style={styles.sleepStagesCaption}>
+              睡眠结构（夜间平均，仅统计含分项记录的日期）
+            </Paragraph>
+            <View style={styles.sleepStagesGrid}>
+              {[
+                { label: '深睡', key: 'deep', icon: 'moon', color: '#6c3483' },
+                {
+                  label: '浅睡',
+                  key: 'light',
+                  icon: 'partly-sunny-outline',
+                  color: '#2874a6',
+                },
+                { label: 'REM', key: 'rem', icon: 'pulse-outline', color: '#1e8449' },
+                { label: '清醒', key: 'awake', icon: 'eye-outline', color: '#b7950b' },
+              ].map(({ label, key, icon, color }) => {
+                const v = report.sleepStages?.[key];
+                return (
+                  <View key={key} style={styles.sleepStageItem}>
+                    <Ionicons name={icon} size={28} color={color} />
+                    <Text style={styles.overviewValue}>{v != null ? v : '—'}</Text>
+                    <Text style={styles.overviewLabel}>{label} (小时)</Text>
+                  </View>
+                );
+              })}
             </View>
           </Card.Content>
         </Card>
@@ -478,6 +514,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
+  },
+  sleepStagesCaption: {
+    ...textStyles.body,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: theme.spacing.md,
+  },
+  sleepStagesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginTop: theme.spacing.sm,
+  },
+  sleepStageItem: {
+    width: '48%',
+    alignItems: 'center',
+    marginBottom: theme.spacing.sm,
   },
   chart: {
     marginVertical: theme.spacing.sm,

@@ -182,6 +182,11 @@ export class ExportService {
       text += `平均心率: ${report.avgHeartRate} bpm\n`;
       text += `平均血糖: ${report.avgBloodGlucose} mmol/L\n`;
       text += `平均睡眠: ${report.avgSleep} 小时\n`;
+      const ss = report.sleepStages || {};
+      text += `平均深睡: ${ss.deep != null ? `${ss.deep} 小时` : '暂无数据'}\n`;
+      text += `平均浅睡: ${ss.light != null ? `${ss.light} 小时` : '暂无数据'}\n`;
+      text += `平均 REM: ${ss.rem != null ? `${ss.rem} 小时` : '暂无数据'}\n`;
+      text += `平均清醒: ${ss.awake != null ? `${ss.awake} 小时` : '暂无数据'}\n`;
       text += `健康评分: ${report.healthScore}/100\n`;
       text += `管理药品数: ${report.medicineCount}\n\n`;
       

@@ -162,6 +162,10 @@ export function buildHealthReportPdfHtml(opts) {
     '小时'
   );
 
+  const ss = report.sleepStages || {};
+  const fmtSleepStageHour = (v) =>
+    v != null ? `${escapeHtml(String(v))} 小时` : '暂无数据';
+
   const aiDisclaimer = escapeHtml(AI_DISCLAIMER_ZH);
 
   const aiAnalysisHtml = report.aiAnalysis
@@ -313,6 +317,10 @@ export function buildHealthReportPdfHtml(opts) {
       <tr><th>平均心率</th><td>${escapeHtml(String(report.avgHeartRate))} bpm</td></tr>
       <tr><th>平均血糖</th><td>${escapeHtml(String(report.avgBloodGlucose))} mmol/L</td></tr>
       <tr><th>平均睡眠</th><td>${escapeHtml(String(report.avgSleep))} 小时</td></tr>
+      <tr><th>平均深睡</th><td>${fmtSleepStageHour(ss.deep)}</td></tr>
+      <tr><th>平均浅睡</th><td>${fmtSleepStageHour(ss.light)}</td></tr>
+      <tr><th>平均 REM</th><td>${fmtSleepStageHour(ss.rem)}</td></tr>
+      <tr><th>平均清醒</th><td>${fmtSleepStageHour(ss.awake)}</td></tr>
       <tr><th>管理药品数</th><td>${escapeHtml(String(report.medicineCount ?? 0))}</td></tr>
     </table>
   </section>

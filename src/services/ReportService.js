@@ -59,6 +59,13 @@ export class ReportService {
             ).toFixed(1)
           : 0;
 
+      const sleepStages = {
+        deep: this.avgSleepStageHours(filteredSleep, 'deepHours'),
+        light: this.avgSleepStageHours(filteredSleep, 'lightHours'),
+        rem: this.avgSleepStageHours(filteredSleep, 'remHours'),
+        awake: this.avgSleepStageHours(filteredSleep, 'awakeHours'),
+      };
+
       // 计算健康评分（0-100）
       const healthScore = this.calculateHealthScore({
         heartRate: avgHeartRate,
@@ -119,6 +126,7 @@ export class ReportService {
         avgHeartRate,
         avgBloodGlucose,
         avgSleep,
+        sleepStages,
         healthScore,
         trends,
         recommendations,
@@ -162,6 +170,15 @@ export class ReportService {
     }
 
     return Math.max(0, Math.min(100, score));
+  }
+
+  /** 仅对有有效分项数值的记录求平均（小时，保留一位小数）；无数据返回 null */
+  static avgSleepStageHours(items, field) {
+    const vals = items
+      .map((item) => Number(item[field]))
+      .filter((n) => Number.isFinite(n) && n >= 0);
+    if (!vals.length) return null;
+    return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
   }
 
   static generateTrendData(heartRate, bloodGlucose, sleep, type) {
