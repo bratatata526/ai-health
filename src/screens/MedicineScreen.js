@@ -30,11 +30,12 @@ import * as Notifications from 'expo-notifications';
 import { Ionicons } from '@expo/vector-icons';
 import ClockIcon from '../components/ClockIcon';
 import DatePicker from '../components/DatePicker';
+import TimePicker from '../components/TimePicker';
 import AIGeneratedIcon from '../components/AIGeneratedIcon';
 import { theme, textStyles } from '../theme';
 import { MedicineService } from '../services/MedicineService';
 import { ExportService } from '../services/ExportService';
-import { validateMedicineName, validateTimesText, validateDateRange } from '../utils/validation';
+import { validateMedicineName, validateTimesText, validateDateRange, parseHHMM } from '../utils/validation';
 
 export default function MedicineScreen() {
   const [medicines, setMedicines] = useState([]);
@@ -63,7 +64,7 @@ export default function MedicineScreen() {
   const [activeMedicineForSettings, setActiveMedicineForSettings] = useState(null);
   const [reminderEnabled, setReminderEnabled] = useState(true);
   const [reminderPaused, setReminderPaused] = useState(false);
-  const [reminderTimesText, setReminderTimesText] = useState('08:00,20:00');
+  const [reminderTimesList, setReminderTimesList] = useState(['08:00', '20:00']);
   // 开始日期默认为今天（必填）
   const getTodayDate = () => new Date().toISOString().split('T')[0];
   const [therapyStartDate, setTherapyStartDate] = useState(getTodayDate());
@@ -243,10 +244,14 @@ export default function MedicineScreen() {
     setReminderEnabled(cfg.enabled !== false);
     setReminderPaused(cfg.paused === true);
     setReminderMode(cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : 'fixed_times'));
-    setReminderTimesText(Array.isArray(cfg.times) && cfg.times.length ? cfg.times.join(',') : '08:00,20:00');
+    const rawTimes = Array.isArray(cfg.times) && cfg.times.length ? cfg.times : null;
+    const normalizedTimes = rawTimes
+      ? [...new Set(rawTimes.map((t) => parseHHMM(t)).filter(Boolean))].sort()
+      : ['08:00', '20:00'];
+    setReminderTimesList(normalizedTimes);
     setTimesPerDay(String(cfg.timesPerDay || '2'));
     setIntervalHours(String(cfg.intervalHours || '8'));
-    setIntervalStartTime(String(cfg.intervalStartTime || '08:00'));
+    setIntervalStartTime(parseHHMM(String(cfg.intervalStartTime || '08:00')) || '08:00');
     setMealTag(String(cfg.mealTag || 'none'));
     setDoseAmount(String(cfg.doseAmount || (medicine.dosage?.match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || '1')));
     setDoseUnit(String(cfg.doseUnit || (medicine.dosage?.match(/([^\d\s/]+)\s*$/)?.[1] || '片')));
@@ -277,7 +282,7 @@ export default function MedicineScreen() {
       };
 
       if (reminderMode === 'fixed_times') {
-        const vt = validateTimesText(reminderTimesText);
+        const vt = validateTimesText(reminderTimesList.join(','));
         if (!vt.ok) {
           Alert.alert('提示', vt.message);
           return;
@@ -292,12 +297,12 @@ export default function MedicineScreen() {
           Alert.alert('提示', '请填写间隔小时（1-24）');
           return;
         }
-        if (!intervalStartTime) {
-          Alert.alert('提示', '请填写起始时间（HH:MM）');
+        if (!intervalStartTime || !parseHHMM(intervalStartTime)) {
+          Alert.alert('提示', '请选择有效的起始时间（HH:MM）');
           return;
         }
         patch.intervalHours = Number(intervalHours);
-        patch.intervalStartTime = intervalStartTime;
+        patch.intervalStartTime = parseHHMM(intervalStartTime);
         patch.times = undefined;
       } else if (reminderMode === 'prn') {
         // 按需：不生成提醒，仅保留配置用于展示/统计
@@ -627,13 +632,46 @@ export default function MedicineScreen() {
       />
 
       {reminderMode === 'fixed_times' && (
-        <TextInput
-          label="每天提醒时间点（逗号分隔，如 08:00,14:00,20:00）"
-          value={reminderTimesText}
-          onChangeText={setReminderTimesText}
-          mode="outlined"
-          style={styles.input}
-        />
+        <View style={{ marginBottom: theme.spacing.sm }}>
+          <Paragraph style={[styles.hintText, { marginBottom: theme.spacing.sm }]}>
+            定点提醒：请选择每天的服药时间（至少 1 个，最多 12 个）
+          </Paragraph>
+          {reminderTimesList.map((t, idx) => (
+            <View key={`time-${idx}`} style={{ marginBottom: theme.spacing.sm }}>
+              <TimePicker
+                label={idx === 0 ? '提醒时间' : undefined}
+                value={t}
+                onChange={(nv) => {
+                  setReminderTimesList((prev) => {
+                    const next = [...prev];
+                    next[idx] = nv;
+                    return next;
+                  });
+                }}
+                onRemove={
+                  reminderTimesList.length <= 1
+                    ? undefined
+                    : () =>
+                        setReminderTimesList((prev) => prev.filter((_, i) => i !== idx))
+                }
+              />
+            </View>
+          ))}
+          <Button
+            mode="outlined"
+            icon="plus"
+            compact
+            onPress={() => {
+              if (reminderTimesList.length >= 12) {
+                Alert.alert('提示', '最多添加 12 个时间点');
+                return;
+              }
+              setReminderTimesList((prev) => [...prev, '12:00']);
+            }}
+          >
+            添加提醒时间
+          </Button>
+        </View>
       )}
       {reminderMode === 'times_per_day' && (
         <TextInput
@@ -655,11 +693,10 @@ export default function MedicineScreen() {
             keyboardType="numeric"
             style={styles.input}
           />
-          <TextInput
-            label="起始时间（HH:MM）"
+          <TimePicker
+            label="起始时间"
             value={intervalStartTime}
-            onChangeText={setIntervalStartTime}
-            mode="outlined"
+            onChange={setIntervalStartTime}
             style={styles.input}
           />
         </>
