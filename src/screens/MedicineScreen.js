@@ -1783,7 +1783,7 @@ export default function MedicineScreen() {
           <Dialog.Title>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Ionicons name="calendar-outline" size={22} color={theme.colors.primary} style={{ marginRight: 8 }} />
-              用药历史时间轴
+              <Text>用药历史时间轴</Text>
             </View>
           </Dialog.Title>
           <Dialog.Content>
