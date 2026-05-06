@@ -17,6 +17,45 @@ import { subscribeHeartRateAlerts } from '../services/HeartRateAlertService';
 const ICON_SIZE = 56;
 const BUBBLE_WIDTH = 260;
 
+/** Web：右键不应交给 PanResponder，否则会先 Grant 里 hideMenu 再被 contextmenu 打开 */
+function isWebSecondaryPointer(evt) {
+  if (Platform.OS !== 'web') return false;
+  const ne = evt?.nativeEvent;
+  if (!ne) return false;
+  if (ne.button === 2) return true;
+  return typeof ne.buttons === 'number' && (ne.buttons & 2) !== 0;
+}
+
+/** Web：快速拖动时光标易离开悬浮层导致丢跟踪，对主指针 setPointerCapture */
+function webAttachPointerCapture(e) {
+  if (Platform.OS !== 'web') return;
+  const ne = e?.nativeEvent;
+  const el = e?.currentTarget;
+  if (!ne || !el?.setPointerCapture) return;
+  if (ne.pointerType === 'mouse' && ne.button !== 0) return;
+  const id = ne.pointerId;
+  if (id === undefined || id === null) return;
+  try {
+    el.setPointerCapture(id);
+  } catch {
+    // ignore
+  }
+}
+
+function webReleasePointerCapture(e) {
+  if (Platform.OS !== 'web') return;
+  const ne = e?.nativeEvent;
+  const el = e?.currentTarget;
+  if (!ne || !el?.releasePointerCapture) return;
+  const id = ne.pointerId;
+  if (id === undefined || id === null) return;
+  try {
+    el.releasePointerCapture(id);
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * 浮动AI小助手组件
  * - 可拖拽移动
@@ -45,6 +84,9 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
   const [showMenu, setShowMenu] = useState(false);
   const menuOpacity = useRef(new Animated.Value(0)).current;
   const menuScale = useRef(new Animated.Value(0.7)).current;
+
+  /** 图标磁吸在屏幕左侧时为 true，气泡/菜单改到图标右侧以免裁切 */
+  const [dockedLeft, setDockedLeft] = useState(false);
 
   // 拖拽标志
   const isDragging = useRef(false);
@@ -192,9 +234,10 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gs) =>
-        Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5,
+      onStartShouldSetPanResponder: (evt) => !isWebSecondaryPointer(evt),
+      onMoveShouldSetPanResponder: (evt, gs) =>
+        !isWebSecondaryPointer(evt) &&
+        (Math.abs(gs.dx) > 5 || Math.abs(gs.dy) > 5),
       onPanResponderGrant: () => {
         isDragging.current = false;
         if (bubbleVisibleRef.current) hideBubble();
@@ -216,6 +259,7 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
         const { width: w } = dims.current;
         const midX = (w - ICON_SIZE) / 2;
         const targetX = clamped.x < midX ? 8 : w - ICON_SIZE - 8;
+        setDockedLeft(clamped.x < midX);
 
         Animated.parallel([
           Animated.spring(panX, { toValue: targetX, friction: 7, useNativeDriver: false }),
@@ -228,6 +272,8 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
         if (!isDragging.current) {
           handleLeftClick();
         }
+        // 拖拽结束后 Web 右键不再触发 Grant，须在此复位，否则 onContextMenu 会因 isDragging 一直为 true 被拦截
+        isDragging.current = false;
       },
     })
   ).current;
@@ -237,8 +283,12 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
     e?.preventDefault?.();
     e?.stopPropagation?.();
     if (isDragging.current) return;
+    if (menuVisibleRef.current) {
+      hideMenu();
+      return;
+    }
     showMenuPopup();
-  }, [showMenuPopup]);
+  }, [hideMenu, showMenuPopup]);
 
   const menuItems = [
     { key: 'AI助手', label: '询问对话', icon: 'chatbubble-ellipses-outline' },
@@ -253,15 +303,21 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
         { transform: [{ translateX: panX }, { translateY: panY }] },
       ]}
       {...panResponder.panHandlers}
-      // Web 端拦截右键
-      {...(Platform.OS === 'web' ? { onContextMenu } : {})}
+      {...(Platform.OS === 'web'
+        ? {
+            onContextMenu,
+            onPointerDown: webAttachPointerCapture,
+            onPointerUp: webReleasePointerCapture,
+            onPointerCancel: webReleasePointerCapture,
+          }
+        : {})}
     >
       {/* 信息气泡 */}
       {showBubble && (
         <Animated.View
           style={[
             styles.bubble,
-            styles.bubbleOnLeft,
+            dockedLeft ? styles.bubbleRightOfIcon : styles.bubbleLeftOfIcon,
             {
               opacity: bubbleOpacity,
               transform: [{ scale: bubbleScale }],
@@ -269,7 +325,12 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
           ]}
         >
           <Text style={styles.bubbleText}>{bubbleContent}</Text>
-          <View style={[styles.bubbleArrow, styles.arrowPointRight]} />
+          <View
+            style={[
+              styles.bubbleArrow,
+              dockedLeft ? styles.arrowPointLeft : styles.arrowPointRight,
+            ]}
+          />
         </Animated.View>
       )}
 
@@ -278,7 +339,7 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
         <Animated.View
           style={[
             styles.menu,
-            styles.bubbleOnLeft,
+            dockedLeft ? styles.bubbleRightOfIcon : styles.bubbleLeftOfIcon,
             {
               opacity: menuOpacity,
               transform: [{ scale: menuScale }],
@@ -299,7 +360,13 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
               <Text style={styles.menuText}>{item.label}</Text>
             </TouchableOpacity>
           ))}
-          <View style={[styles.bubbleArrow, styles.arrowPointRight, { top: 20 }]} />
+          <View
+            style={[
+              styles.bubbleArrow,
+              dockedLeft ? styles.arrowPointLeft : styles.arrowPointRight,
+              { top: 20 },
+            ]}
+          />
         </Animated.View>
       )}
 
@@ -325,7 +392,12 @@ const styles = StyleSheet.create({
     top: 0,
     zIndex: 9999,
     ...Platform.select({
-      web: { cursor: 'pointer', willChange: 'transform' },
+      web: {
+        cursor: 'pointer',
+        willChange: 'transform',
+        userSelect: 'none',
+        touchAction: 'none',
+      },
       default: {},
     }),
   },
@@ -346,6 +418,8 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.25,
         shadowRadius: 8,
         shadowOffset: { width: 0, height: 4 },
+        userSelect: 'none',
+        touchAction: 'none',
       },
     }),
   },
@@ -362,11 +436,23 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
       android: { elevation: 4 },
-      web: { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+      web: {
+        shadowColor: '#000',
+        shadowOpacity: 0.15,
+        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 2 },
+        userSelect: 'none',
+        touchAction: 'none',
+      },
     }),
   },
-  bubbleOnLeft: {
+  /** 气泡在图标左侧（图标贴屏右时用） */
+  bubbleLeftOfIcon: {
     right: ICON_SIZE + 10,
+  },
+  /** 气泡在图标右侧（图标贴屏左时用） */
+  bubbleRightOfIcon: {
+    left: ICON_SIZE + 10,
   },
   bubbleText: {
     ...textStyles.body,
@@ -390,6 +476,12 @@ const styles = StyleSheet.create({
     borderLeftWidth: 8,
     borderLeftColor: BUBBLE_BG,
   },
+  arrowPointLeft: {
+    left: -8,
+    borderRightWidth: 8,
+    borderRightColor: BUBBLE_BG,
+    borderLeftWidth: 0,
+  },
   // ---- 右键菜单 ----
   menu: {
     position: 'absolute',
@@ -401,7 +493,14 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
       android: { elevation: 6 },
-      web: { shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+      web: {
+        shadowColor: '#000',
+        shadowOpacity: 0.18,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 3 },
+        userSelect: 'none',
+        touchAction: 'none',
+      },
     }),
   },
   menuItem: {

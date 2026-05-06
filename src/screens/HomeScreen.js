@@ -187,7 +187,7 @@ export default function HomeScreen({ navigation, onLogout }) {
               <Title style={styles.cardTitle}>AI舌诊</Title>
             </View>
             <Paragraph style={styles.cardDescription}>
-              进入中医舌诊页面
+            拍摄舌象，AI分析舌象特征，获取体质调养参考
             </Paragraph>
           </Card.Content>
         </Card>

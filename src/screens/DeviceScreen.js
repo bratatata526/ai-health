@@ -478,13 +478,6 @@ export default function DeviceScreen() {
                 <Ionicons name="heart" size={32} color={theme.colors.error} />
                 <Text style={styles.statValue}>{liveHeartRate || todayStats.heartRate}</Text>
                 <Text style={styles.statLabel}>心率 (bpm)</Text>
-                {liveHeartRate != null && (
-                  <Text style={styles.hrMonitorHint}>
-                    异常提示：&lt;{heartRateAlertMonitor.lowBpm} 或 &gt;{heartRateAlertMonitor.highBpm}{' '}
-                    bpm（静息参考，约 {Math.round(heartRateAlertMonitor.cooldownMs / 1000)}s
-                    内同类仅提醒一次）
-                  </Text>
-                )}
               </View>
               <View style={styles.statItem}>
                 <Ionicons name="water" size={32} color={theme.colors.secondary} />
@@ -501,6 +494,12 @@ export default function DeviceScreen() {
                 <Text style={styles.statLabel}>睡眠 (小时)</Text>
               </View>
             </View>
+            {liveHeartRate != null && (
+              <Text style={styles.hrMonitorHint}>
+                异常提示：&lt;{heartRateAlertMonitor.lowBpm} 或 &gt;{heartRateAlertMonitor.highBpm} bpm（静息参考，
+                约 {Math.round(heartRateAlertMonitor.cooldownMs / 1000)}s 内同类仅提醒一次）
+              </Text>
+            )}
           </Card.Content>
         </Card>
 
@@ -1184,9 +1183,13 @@ const styles = StyleSheet.create({
   statsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-around',
+    alignItems: 'flex-start',
     marginTop: theme.spacing.md,
   },
   statItem: {
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 4,
     alignItems: 'center',
   },
   statValue: {
@@ -1205,9 +1208,10 @@ const styles = StyleSheet.create({
     ...textStyles.body,
     fontSize: 10,
     color: theme.colors.textSecondary,
-    marginTop: 6,
+    marginTop: 10,
     textAlign: 'center',
-    paddingHorizontal: 4,
+    width: '100%',
+    paddingHorizontal: 6,
     lineHeight: 14,
   },
   emptyDevices: {

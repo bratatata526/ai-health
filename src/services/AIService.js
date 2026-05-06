@@ -4,6 +4,53 @@ import { Platform } from 'react-native';
 import { buildHealthAdviceSummary } from '../utils/healthSummaryForAI';
 import { sanitizeHealthAdviceText } from '../utils/sanitizeAiOutput';
 
+/** 从 OpenAI 兼容的 chat/completions JSON 中提取助手正文（兼容部分厂商字段差异） */
+function extractOpenAIChatContent(data) {
+  const choice = data?.choices?.[0];
+  if (!choice) return null;
+
+  const msg = choice.message ?? choice.delta;
+  if (msg) {
+    const c = msg.content;
+    if (typeof c === 'string' && c.length > 0) return c;
+    if (Array.isArray(c)) {
+      const joined = c
+        .map((part) => {
+          if (typeof part === 'string') return part;
+          if (part?.text) return String(part.text);
+          return '';
+        })
+        .join('');
+      if (joined.length > 0) return joined;
+    }
+  }
+  if (typeof choice.text === 'string' && choice.text.length > 0) {
+    return choice.text;
+  }
+  return null;
+}
+
+/** 解析上游/代理返回的错误说明（OpenAI、硅基流动及部分网关） */
+function extractUpstreamErrorMessage(data) {
+  const e = data?.error;
+  if (e != null && e !== false) {
+    if (typeof e === 'string') return e;
+    if (typeof e === 'object') {
+      return (
+        e.message ||
+        e.msg ||
+        (typeof e.code !== 'undefined' ? `${e.code}: ${e.message || e.msg || ''}` : '').trim() ||
+        JSON.stringify(e)
+      );
+    }
+    return String(e);
+  }
+  if (data?.choices?.length) return null;
+  if (typeof data?.message === 'string' && data.message.trim()) return data.message.trim();
+  if (typeof data?.msg === 'string' && data.msg.trim()) return data.msg.trim();
+  return null;
+}
+
 /**
  * AI服务类
  * 提供健康分析、用药建议等AI功能
@@ -59,17 +106,50 @@ export class AIService {
         body: JSON.stringify(body),
       });
 
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error.message || 'AI调用失败');
+      const rawText = await response.text();
+      let data;
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        console.error('硅基流动响应非JSON:', String(rawText).slice(0, 500));
+        throw new Error(
+          response.ok
+            ? 'AI返回格式异常：响应不是合法JSON'
+            : `AI请求失败（HTTP ${response.status}），且响应体非JSON`
+        );
       }
 
-      if (data.choices && data.choices[0]) {
-        return data.choices[0].message.content;
+      if (!response.ok) {
+        const upstream = extractUpstreamErrorMessage(data);
+        throw new Error(
+          upstream || `AI请求失败（HTTP ${response.status}）`
+        );
       }
 
-      throw new Error('AI返回格式异常');
+      const upstreamErr = extractUpstreamErrorMessage(data);
+      if (upstreamErr && !data?.choices?.length) {
+        throw new Error(upstreamErr);
+      }
+
+      if (data.raw != null && !data?.choices?.length) {
+        const hint = String(data.raw).trim().slice(0, 240);
+        console.error('代理返回非标准上游体:', hint);
+        throw new Error(
+          hint
+            ? `上游响应无法解析为JSON：${hint}`
+            : '上游响应无法解析为JSON，请检查代理与网络'
+        );
+      }
+
+      const content = extractOpenAIChatContent(data);
+      if (content != null && content.length > 0) {
+        return content;
+      }
+
+      console.error('硅基流动JSON缺正文:', JSON.stringify(data).slice(0, 800));
+      throw new Error(
+        'AI返回格式异常：未找到有效的回复正文（choices[0].message.content）'
+      );
     } catch (error) {
       console.error('硅基流动调用失败:', error);
       throw error;

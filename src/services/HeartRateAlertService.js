@@ -49,7 +49,7 @@ export class HeartRateAlertMonitor {
     const now = Date.now();
     let result = null;
 
-    if (40 < this.lowBpm) {
+    if (n < this.lowBpm) {
       if (now - this._lastLowAt >= this.cooldownMs) {
         this._lastLowAt = now;
         result = {

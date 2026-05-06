@@ -2,14 +2,18 @@
 // 官网：https://www.siliconflow.cn/
 //
 // Key 来源优先级：
-// 1) EXPO_PUBLIC_SILICONFLOW_API_KEY（推荐：通过 .env 或运行环境注入）
-// 2) app.json -> expo.extra.SILICONFLOW_API_KEY（当无法/不方便使用 .env 时的兜底）
+// 1) EXPO_PUBLIC_SILICONFLOW_API_KEY（Expo 前端推荐）
+// 2) SILICONFLOW_API_KEY（Node/代理常用）
+// 3) app.json -> expo.extra.SILICONFLOW_API_KEY（兜底，不建议长期使用）
 
 import appConfig from '../../app.json';
 
-const extraKey = appConfig?.expo?.extra?.SILICONFLOW_API_KEY || '';
-const envKey = process.env.EXPO_PUBLIC_SILICONFLOW_API_KEY || '';
-const siliconFlowKey = envKey || extraKey;
+const normalizeKey = (v) => String(v || '').trim();
+
+const extraKey = normalizeKey(appConfig?.expo?.extra?.SILICONFLOW_API_KEY);
+const expoPublicKey = normalizeKey(process.env.EXPO_PUBLIC_SILICONFLOW_API_KEY);
+const nodeEnvKey = normalizeKey(process.env.SILICONFLOW_API_KEY);
+const siliconFlowKey = expoPublicKey || nodeEnvKey || extraKey;
 
 export const AI_CONFIG = {
   SILICONFLOW: {

@@ -28,7 +28,12 @@ dist/
 !README.md
 
 # TongueDiagnosis
+
 TongueDiagnosis/venv
+TongueDiagnosis/.venv312/
+**/__pycache__/
+*.pyc
+TongueDiagnosis/requirements-py312.txt
 TongueDiagnosis/.idea
 TongueDiagnosis/frontend/node_modules
 TongueDiagnosis/__pycache__
