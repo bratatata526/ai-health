@@ -255,25 +255,29 @@ export class ExportService {
       minute: '2-digit',
     });
 
+    const filename = buildHealthReportPdfFilename(exportedAt);
     const html = buildHealthReportPdfHtml({
       displayName,
       report,
       assistantAdvice,
       generatedAtDisplay,
+      reportTitle: filename.replace(/\.pdf$/i, ''),
     });
-
-    const filename = buildHealthReportPdfFilename(exportedAt);
 
     if (Platform.OS === 'web') {
       try {
+        const reportWindowPath = `/report-print/${encodeURIComponent(
+          filename.replace(/\.pdf$/i, '')
+        )}`;
         const w =
           typeof globalThis !== 'undefined' && globalThis.window
-            ? globalThis.window.open('', '_blank')
+            ? globalThis.window.open(reportWindowPath, '_blank')
             : null;
         if (w && w.document) {
           w.document.open();
           w.document.write(html);
           w.document.close();
+          w.document.title = filename.replace(/\.pdf$/i, '');
           w.focus();
           w.print();
           return {

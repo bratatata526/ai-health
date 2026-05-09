@@ -173,13 +173,7 @@ export default function HomeScreen({ navigation, onLogout }) {
 
         <Card
           style={styles.card}
-          onPress={() => {
-            if (Platform.OS === 'web') {
-              window.location.assign('http://localhost:5173');
-            } else {
-              Alert.alert('提示', '该功能仅支持 Web 端');
-            }
-          }}
+          onPress={() => navigation.navigate('舌诊')}
         >
           <Card.Content>
             <View style={styles.cardHeader}>

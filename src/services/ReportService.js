@@ -1,8 +1,298 @@
 import { DeviceService } from './DeviceService';
 import { MedicineService } from './MedicineService';
 import { AIService } from './AIService';
+import { SecureStorage } from '../utils/secureStorage';
+
+function mean(values) {
+  if (!values.length) return 0;
+  return values.reduce((sum, n) => sum + n, 0) / values.length;
+}
+
+function stdDeviation(values, avg = mean(values)) {
+  if (!values.length) return 0;
+  const variance = values.reduce((sum, n) => sum + (n - avg) ** 2, 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function quantile(values, q) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  if (sorted[base + 1] == null) return sorted[base];
+  return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+}
+
+function resolveStatus(avg, low, high) {
+  if (!Number.isFinite(avg)) return '未知';
+  if (avg < low) return '偏低';
+  if (avg > high) return '偏高';
+  return '正常';
+}
+
+function buildTrendInsight(metricName, unit, values, normalLow, normalHigh, digits = 1) {
+  const valid = (values || []).filter((v) => Number.isFinite(v) && v > 0);
+  if (!valid.length) {
+    return {
+      metricName,
+      unit,
+      normalRange: `${normalLow}-${normalHigh} ${unit}`,
+      status: '未知',
+      summary: '有效数据不足，暂无法判断趋势。',
+      sampleCount: 0,
+      average: null,
+      min: null,
+      max: null,
+      latest: null,
+      std: null,
+    };
+  }
+  const avg = mean(valid);
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  const latest = valid[valid.length - 1];
+  const std = stdDeviation(valid, avg);
+  const status = resolveStatus(avg, normalLow, normalHigh);
+  return {
+    metricName,
+    unit,
+    normalRange: `${normalLow}-${normalHigh} ${unit}`,
+    status,
+    summary: `${metricName}均值${status}，波动标准差约 ${std.toFixed(digits)} ${unit}。`,
+    sampleCount: valid.length,
+    average: Number(avg.toFixed(digits)),
+    min: Number(min.toFixed(digits)),
+    max: Number(max.toFixed(digits)),
+    latest: Number(latest.toFixed(digits)),
+    std: Number(std.toFixed(digits)),
+  };
+}
+
+function hourOfPoint(item) {
+  const ts = new Date(item.date).getTime();
+  if (!Number.isFinite(ts)) return null;
+  return new Date(ts).getHours();
+}
+
+function inferHeartRatePeriod(hour) {
+  if (hour == null) return 'unknown';
+  if (hour < 6 || hour >= 22) return 'rest';
+  return 'active';
+}
+
+function summarizeHeartRateByPeriod(minuteSeries) {
+  const restValues = [];
+  const activeValues = [];
+  (minuteSeries || []).forEach((item) => {
+    const value = Number(item.value);
+    if (!Number.isFinite(value) || value <= 0) return;
+    const period = inferHeartRatePeriod(hourOfPoint(item));
+    if (period === 'rest') restValues.push(value);
+    if (period === 'active') activeValues.push(value);
+  });
+  const restAvg = restValues.length ? Number(mean(restValues).toFixed(1)) : null;
+  const activeAvg = activeValues.length ? Number(mean(activeValues).toFixed(1)) : null;
+  return {
+    rest: {
+      sampleCount: restValues.length,
+      average: restAvg,
+      status: resolveStatus(restAvg, 55, 85),
+    },
+    active: {
+      sampleCount: activeValues.length,
+      average: activeAvg,
+      status: resolveStatus(activeAvg, 60, 100),
+    },
+  };
+}
+
+function buildHeartRateAbnormalSegments(minuteSeries) {
+  const points = (minuteSeries || [])
+    .map((item) => {
+      const ts = new Date(item.date).getTime();
+      const value = Number(item.value);
+      if (!Number.isFinite(ts) || !Number.isFinite(value) || value <= 0) return null;
+      return { ts, value, date: new Date(ts).toISOString() };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ts - b.ts);
+
+  const segments = [];
+  let current = null;
+
+  const closeCurrent = () => {
+    if (!current || !current.points.length) return;
+    const values = current.points.map((p) => p.value);
+    const startTs = current.points[0].ts;
+    const endTs = current.points[current.points.length - 1].ts;
+    const durationMin = Math.max(1, Math.round((endTs - startTs) / 60000) + 1);
+    if (durationMin >= 3) {
+      segments.push({
+        type: current.type,
+        startAt: new Date(startTs).toISOString(),
+        endAt: new Date(endTs).toISOString(),
+        durationMin,
+        average: Number(mean(values).toFixed(1)),
+        min: Number(Math.min(...values).toFixed(1)),
+        max: Number(Math.max(...values).toFixed(1)),
+      });
+    }
+    current = null;
+  };
+
+  for (const point of points) {
+    let type = null;
+    if (point.value > 100) type = 'high';
+    else if (point.value < 60) type = 'low';
+
+    if (!type) {
+      closeCurrent();
+      continue;
+    }
+
+    if (!current) {
+      current = { type, points: [point] };
+      continue;
+    }
+
+    const prev = current.points[current.points.length - 1];
+    const gapMin = (point.ts - prev.ts) / 60000;
+    if (current.type === type && gapMin <= 2.5) {
+      current.points.push(point);
+    } else {
+      closeCurrent();
+      current = { type, points: [point] };
+    }
+  }
+  closeCurrent();
+
+  return segments
+    .sort((a, b) => b.durationMin - a.durationMin)
+    .slice(0, 3);
+}
+
+function buildBloodGlucoseDailyFindings(points, maxItems = 6) {
+  const byDay = new Map();
+  (points || []).forEach((item) => {
+    const d = new Date(item.date);
+    const value = Number(item.value);
+    if (!Number.isFinite(d.getTime()) || !Number.isFinite(value)) return;
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    const row = byDay.get(key) || { points: [], date: d };
+    row.points.push({ d, value });
+    byDay.set(key, row);
+  });
+
+  const findings = [];
+  Array.from(byDay.values())
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .forEach((row) => {
+      const values = row.points.map((p) => p.value);
+      const avg = mean(values);
+      const highPoint = row.points.reduce((acc, p) => (!acc || p.value > acc.value ? p : acc), null);
+      const lowPoint = row.points.reduce((acc, p) => (!acc || p.value < acc.value ? p : acc), null);
+      const dateLabel = `${row.date.getMonth() + 1}/${row.date.getDate()}`;
+
+      if (highPoint && highPoint.value > 7.8) {
+        const t = highPoint.d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        findings.push(`${dateLabel} ${t} 血糖偏高（${highPoint.value.toFixed(1)} mmol/L）`);
+      }
+      if (lowPoint && lowPoint.value < 3.9) {
+        const t = lowPoint.d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        findings.push(`${dateLabel} ${t} 血糖偏低（${lowPoint.value.toFixed(1)} mmol/L）`);
+      }
+      if (avg > 6.5) {
+        findings.push(`${dateLabel} 日均血糖偏高（${avg.toFixed(1)} mmol/L）`);
+      }
+    });
+
+  return findings.slice(0, maxItems);
+}
+
+function buildSleepDailyFindings(sleepEntries, maxItems = 7) {
+  const findings = [];
+  (sleepEntries || [])
+    .map((item) => {
+      const date = new Date(item.date);
+      const total = Number(item.totalHours != null ? item.totalHours : item.value);
+      const deep = Number(item.deepHours);
+      if (!Number.isFinite(date.getTime()) || !Number.isFinite(total)) return null;
+      return { date, total, deep };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.getTime() - b.date.getTime())
+    .forEach((row) => {
+      const dateLabel = `${row.date.getMonth() + 1}/${row.date.getDate()}`;
+      if (row.total < 7) {
+        findings.push(`${dateLabel} 睡眠时长不足（${row.total.toFixed(1)} h）`);
+      } else if (row.total > 9.5) {
+        findings.push(`${dateLabel} 睡眠时长偏长（${row.total.toFixed(1)} h）`);
+      }
+
+      if (Number.isFinite(row.deep) && row.total > 0) {
+        const deepRatio = (row.deep / row.total) * 100;
+        if (deepRatio < 18) {
+          findings.push(
+            `${dateLabel} 深睡占比偏低（${deepRatio.toFixed(0)}%，深睡${row.deep.toFixed(1)}h）`
+          );
+        }
+      }
+
+    });
+
+  return findings.slice(0, maxItems);
+}
+
+function extractMarkdownSection(markdown, headingCandidates) {
+  const text = String(markdown || '');
+  if (!text.trim()) return '';
+  for (const heading of headingCandidates) {
+    const pattern = new RegExp(
+      `(?:^|\\n)#{0,3}\\s*${heading}\\s*\\n([\\s\\S]*?)(?=\\n#{1,3}\\s|$)`,
+      'i'
+    );
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1].trim();
+  }
+  return '';
+}
 
 export class ReportService {
+  static async getLatestTongueAnalysis() {
+    try {
+      const rows = (await SecureStorage.getItem('@tongue_analysis_history')) || [];
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const latest = rows
+        .filter((item) => item?.status === 'success' && item?.result)
+        .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))[0];
+      if (!latest) return null;
+      const features = latest.result?.features || {};
+      const markdown = String(latest.result?.analysis_markdown || '');
+      return {
+        analyzedAt: latest.updated_at || latest.created_at || Date.now(),
+        originalImage: latest.original_image_uri || null,
+        segmentedImage: latest.result?.segmented_image || null,
+        features: {
+          tongueColor: features?.tongue_color?.label || '未知',
+          coatingColor: features?.coating_color?.label || '未知',
+          thickness: features?.tongue_thickness?.label || '未知',
+          rotGreasy: features?.rot_greasy?.label || '未知',
+        },
+        constitution:
+          extractMarkdownSection(markdown, ['可能的中医证型', '中医体质', '体质倾向']) || '',
+        conditioningAdvice:
+          extractMarkdownSection(markdown, ['调理建议', '调护建议', '生活建议']) || '',
+        riskTips:
+          extractMarkdownSection(markdown, ['风险提示', '注意事项', '就医提示']) || '',
+        fullAnalysis: markdown,
+      };
+    } catch (e) {
+      console.warn('读取舌诊报告数据失败:', e);
+      return null;
+    }
+  }
+
   static async generateReport(type = 'week', useAI = false) {
     try {
       const healthData = await DeviceService.getHealthData();
@@ -81,6 +371,15 @@ export class ReportService {
         filteredSleep,
         type
       );
+      const trendInsights = this.generateTrendInsights({
+        trends,
+        filteredHeartRate,
+        filteredBloodGlucose,
+        filteredSleep,
+        minuteHeartRate: healthData.heartRateMinuteAvg || [],
+        startDate,
+      });
+      const tongueAnalysis = await this.getLatestTongueAnalysis();
 
       // 生成健康建议（优先使用AI，失败则使用规则）
       let recommendations = [];
@@ -129,6 +428,8 @@ export class ReportService {
         sleepStages,
         healthScore,
         trends,
+        trendInsights,
+        tongueAnalysis,
         recommendations,
         aiAnalysis, // AI生成的详细分析
         medicineCount: medicines.length,
@@ -188,6 +489,9 @@ export class ReportService {
     const heartRateData = [];
     const bloodGlucoseData = [];
     const sleepData = [];
+    const sleepDeepData = [];
+    const sleepLightData = [];
+    const sleepRemData = [];
 
     for (let i = days - 1; i >= 0; i--) {
       const date = new Date();
@@ -209,7 +513,7 @@ export class ReportService {
         (item) =>
           new Date(item.date) >= dayStart && new Date(item.date) <= dayEnd
       );
-      const daySleep = sleep.find(
+      const daySleepRows = sleep.filter(
         (item) =>
           new Date(item.date) >= dayStart && new Date(item.date) <= dayEnd
       );
@@ -237,9 +541,48 @@ export class ReportService {
       );
 
       sleepData.push(
-        daySleep
+        daySleepRows.length
           ? parseFloat(
-              daySleep.totalHours != null ? daySleep.totalHours : daySleep.value != null ? daySleep.value : 0
+              (
+                daySleepRows.reduce(
+                  (sum, item) =>
+                    sum +
+                    Number(
+                      item.totalHours != null ? item.totalHours : item.value != null ? item.value : 0
+                    ),
+                  0
+                ) / daySleepRows.length
+              ).toFixed(1)
+            )
+          : 0
+      );
+      sleepDeepData.push(
+        daySleepRows.length
+          ? parseFloat(
+              (
+                daySleepRows.reduce((sum, item) => sum + Number(item.deepHours || 0), 0) /
+                daySleepRows.length
+              ).toFixed(1)
+            )
+          : 0
+      );
+      sleepLightData.push(
+        daySleepRows.length
+          ? parseFloat(
+              (
+                daySleepRows.reduce((sum, item) => sum + Number(item.lightHours || 0), 0) /
+                daySleepRows.length
+              ).toFixed(1)
+            )
+          : 0
+      );
+      sleepRemData.push(
+        daySleepRows.length
+          ? parseFloat(
+              (
+                daySleepRows.reduce((sum, item) => sum + Number(item.remHours || 0), 0) /
+                daySleepRows.length
+              ).toFixed(1)
             )
           : 0
       );
@@ -259,7 +602,80 @@ export class ReportService {
           labels,
           datasets: [{ data: sleepData }],
         },
+        sleepStages: {
+          labels,
+          deep: sleepDeepData,
+          light: sleepLightData,
+          rem: sleepRemData,
+          total: sleepData,
+        },
       };
+  }
+
+  static generateTrendInsights({
+    trends,
+    filteredHeartRate,
+    filteredBloodGlucose,
+    filteredSleep,
+    minuteHeartRate,
+    startDate,
+  }) {
+    const heartRateDay = trends?.heartRate?.datasets?.[0]?.data || [];
+    const bloodGlucoseDay = trends?.bloodGlucose?.datasets?.[0]?.data || [];
+    const sleepDay = trends?.sleep?.datasets?.[0]?.data || [];
+
+    const heartRateInsight = buildTrendInsight('心率', 'bpm', heartRateDay, 60, 100, 1);
+    const bloodGlucoseInsight = buildTrendInsight(
+      '血糖',
+      'mmol/L',
+      bloodGlucoseDay,
+      3.9,
+      6.1,
+      1
+    );
+    const sleepInsight = buildTrendInsight('睡眠', '小时', sleepDay, 7, 9, 1);
+
+    const minuteSeries = (minuteHeartRate || []).filter((item) => {
+      const ts = new Date(item.date).getTime();
+      return Number.isFinite(ts) && ts >= startDate.getTime();
+    });
+    const minuteValues = minuteSeries
+      .map((item) => Number(item.value))
+      .filter((v) => Number.isFinite(v) && v > 0);
+
+    const minuteHeartRateInsight = minuteValues.length
+      ? {
+          sampleCount: minuteValues.length,
+          average: Number(mean(minuteValues).toFixed(1)),
+          min: Number(Math.min(...minuteValues).toFixed(1)),
+          max: Number(Math.max(...minuteValues).toFixed(1)),
+          p95: Number(quantile(minuteValues, 0.95).toFixed(1)),
+          std: Number(stdDeviation(minuteValues).toFixed(1)),
+        }
+      : null;
+    const periodSummary = summarizeHeartRateByPeriod(minuteSeries);
+    const abnormalSegments = buildHeartRateAbnormalSegments(minuteSeries);
+
+    return {
+      heartRate: {
+        ...heartRateInsight,
+        rawPointCount: filteredHeartRate.length,
+        minuteAverage: minuteHeartRateInsight,
+        periodSummary,
+        abnormalSegments,
+        dailyFindings: [],
+      },
+      bloodGlucose: {
+        ...bloodGlucoseInsight,
+        rawPointCount: filteredBloodGlucose.length,
+        dailyFindings: buildBloodGlucoseDailyFindings(filteredBloodGlucose),
+      },
+      sleep: {
+        ...sleepInsight,
+        rawPointCount: filteredSleep.length,
+        dailyFindings: buildSleepDailyFindings(filteredSleep),
+      },
+    };
   }
 
   static generateRecommendations(data) {

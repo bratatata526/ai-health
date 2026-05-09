@@ -3,6 +3,7 @@ import { WEB_PROXY_CONFIG } from '../config/webProxy';
 import { Platform } from 'react-native';
 import { buildHealthAdviceSummary } from '../utils/healthSummaryForAI';
 import { sanitizeHealthAdviceText } from '../utils/sanitizeAiOutput';
+import { SecureStorage } from '../utils/secureStorage';
 
 /** 从 OpenAI 兼容的 chat/completions JSON 中提取助手正文（兼容部分厂商字段差异） */
 function extractOpenAIChatContent(data) {
@@ -57,6 +58,56 @@ function extractUpstreamErrorMessage(data) {
  * 使用硅基流动 SiliconFlow API
  */
 export class AIService {
+  static extractMarkdownSection(markdown, headingCandidates) {
+    const text = String(markdown || '');
+    if (!text.trim()) return '';
+    for (const heading of headingCandidates) {
+      const pattern = new RegExp(
+        `(?:^|\\n)#{0,3}\\s*${heading}\\s*\\n([\\s\\S]*?)(?=\\n#{1,3}\\s|$)`,
+        'i'
+      );
+      const match = text.match(pattern);
+      if (match?.[1]) {
+        return match[1].replace(/\n+/g, ' ').trim();
+      }
+    }
+    return '';
+  }
+
+  static async getLatestTongueInsight() {
+    try {
+      const rows = (await SecureStorage.getItem('@tongue_analysis_history')) || [];
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const latest = rows
+        .filter((item) => item?.status === 'success' && item?.result)
+        .sort((a, b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))[0];
+      if (!latest) return null;
+      const features = latest.result?.features || {};
+      const markdown = String(latest.result?.analysis_markdown || '');
+      const constitution =
+        this.extractMarkdownSection(markdown, ['可能的中医证型', '中医体质', '体质倾向']) || '';
+      const conditioningAdvice =
+        this.extractMarkdownSection(markdown, ['调理建议', '调护建议', '生活建议']) || '';
+      const riskTips =
+        this.extractMarkdownSection(markdown, ['风险提示', '注意事项', '就医提示']) || '';
+      return {
+        analyzedAt: latest.updated_at || latest.created_at || Date.now(),
+        features: {
+          tongueColor: features?.tongue_color?.label || '',
+          coatingColor: features?.coating_color?.label || '',
+          thickness: features?.tongue_thickness?.label || '',
+          rotGreasy: features?.rot_greasy?.label || '',
+        },
+        constitution,
+        conditioningAdvice,
+        riskTips,
+      };
+    } catch (e) {
+      console.warn('读取舌诊历史失败:', e);
+      return null;
+    }
+  }
+
   /**
    * 调用硅基流动 API（兼容OpenAI格式）
    */
@@ -296,19 +347,39 @@ ${medicineList}
    * 生成个性化健康建议
    */
   static async generatePersonalizedAdvice(userData) {
-    const summary = buildHealthAdviceSummary(userData || {});
+    const tongueInsight = await this.getLatestTongueInsight();
+    const summary = buildHealthAdviceSummary({ ...(userData || {}), tongueInsight });
     const prompt = `下面是用户在本应用中产生的健康数据摘要（已做统计聚合；请勿编造未在摘要中出现的数值或怪异日期）。
 
 ${summary}
 
 请撰写一篇「个性化健康建议」（全文使用简体中文），不必采用僵硬的条文编号模板，可自行分段，读来自然连贯即可。
 
-内容上请详尽、可读：对心率、血糖、睡眠（及用药若有）基于摘要逐一解读；能综合则说明指标间呼应，不能则说明数据局限；再给生活方式与自我管理建议；涉及用药与安全时提示遵医嘱并及时就医。
+内容上请详尽、可读：对心率、血糖、睡眠（及用药若有）基于摘要逐一解读；重点使用摘要中的分钟级心率、分时段结论、异常连续时长信息进行更专业分析；若摘要含舌诊信息，必须加入「中医体质/证型倾向」「调理建议」「风险提示」三个部分，并与客观指标互相印证；能综合则说明指标间呼应，不能则说明数据局限；涉及用药与安全时提示遵医嘱并及时就医。
+
+输出格式必须严格遵循以下结构（每个标题单独成行）：
+### 心率分析
+（正文段落）
+
+### 血糖分析
+（正文段落）
+
+### 睡眠分析
+（正文段落）
+
+### 中医体质分析
+（正文段落：必须同时包含体质/证型倾向、调理建议、风险提示）
+
+### 用药建议
+（若无用药可写“当前无药物管理数据”）
 
 **强制遵守（违者视为不合格输出）：**
 - 禁止使用「解析」一词作为填充语，禁止同一短词无限重复或以逗号刷屏；禁止连续写出三个以上标点（句号、逗号等均不可堆叠）。
+- 禁止出现重复标点（例如“，，”“，。”）。
 - 禁止抄写或输出与本任务无关的应用界面文案（例如底部导航「首页」「药品」「设备」「报告」等）。
 - 数字格式规范：平均值等写「72.8」形式，禁止使用「72..8」或错乱小数点。
+- 每段首行请使用两个全角空格“　　”开头，分段自然，不要把整篇写成一段。
+- 不允许单独输出“风险提示”作为标题；风险提示必须并入“中医体质分析”小节。
 - 若某段难以续写应在自然收尾处停止，不可用无意义词句凑字数。
 
 其余：只引用摘要中的数字与时间；数据不足则说明如何补充监测；不进行医学诊断。`;

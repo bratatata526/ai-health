@@ -3,6 +3,36 @@ import { SecureStorage } from '../utils/secureStorage';
 const DEVICES_KEY = '@devices';
 const HEALTH_DATA_KEY = '@health_data';
 
+function normalizeHeartRatePoint(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const value = Number(raw.value);
+  const ts = raw.date ? new Date(raw.date).getTime() : NaN;
+  if (!Number.isFinite(value) || !Number.isFinite(ts)) return null;
+  return { date: new Date(ts).toISOString(), value };
+}
+
+function buildMinuteAverageSeries(heartRateSeries) {
+  const minuteBuckets = new Map();
+  (heartRateSeries || []).forEach((item) => {
+    const point = normalizeHeartRatePoint(item);
+    if (!point) return;
+    const d = new Date(point.date);
+    d.setSeconds(0, 0);
+    const minuteIso = d.toISOString();
+    const existing = minuteBuckets.get(minuteIso) || { sum: 0, count: 0 };
+    existing.sum += point.value;
+    existing.count += 1;
+    minuteBuckets.set(minuteIso, existing);
+  });
+  return Array.from(minuteBuckets.entries())
+    .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime())
+    .map(([date, bucket]) => ({
+      date,
+      value: Math.round((bucket.sum / bucket.count) * 10) / 10,
+      sampleCount: bucket.count,
+    }));
+}
+
 function migrateSleepEntry(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const date = raw.date;
@@ -40,13 +70,17 @@ function migrateSleepEntry(raw) {
 
 function migrateHealthPayload(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return { heartRate: [], bloodGlucose: [], sleep: [] };
+    return { heartRate: [], heartRateMinuteAvg: [], bloodGlucose: [], sleep: [] };
   }
   const heartRate = Array.isArray(data.heartRate) ? data.heartRate : [];
+  const heartRateMinuteAvg =
+    Array.isArray(data.heartRateMinuteAvg) && data.heartRateMinuteAvg.length > 0
+      ? data.heartRateMinuteAvg
+      : buildMinuteAverageSeries(heartRate);
   const bloodGlucose = Array.isArray(data.bloodGlucose) ? data.bloodGlucose : [];
   const sleepRaw = Array.isArray(data.sleep) ? data.sleep : [];
   const sleep = sleepRaw.map(migrateSleepEntry).filter(Boolean);
-  return { heartRate, bloodGlucose, sleep };
+  return { heartRate, heartRateMinuteAvg, bloodGlucose, sleep };
 }
 
 /**
@@ -173,6 +207,9 @@ export class DeviceService {
       existingData.heartRate = existingData.heartRate.filter(
         (item) => new Date(item.date) >= thirtyDaysAgo
       );
+      existingData.heartRateMinuteAvg = buildMinuteAverageSeries(existingData.heartRate).filter(
+        (item) => new Date(item.date) >= thirtyDaysAgo
+      );
       existingData.bloodGlucose = existingData.bloodGlucose.filter(
         (item) => new Date(item.date) >= thirtyDaysAgo
       );
@@ -196,56 +233,69 @@ export class DeviceService {
           && Array.isArray(data.heartRate)) {
         return data;
       }
-      return { heartRate: [], bloodGlucose: [], sleep: [] };
+      return { heartRate: [], heartRateMinuteAvg: [], bloodGlucose: [], sleep: [] };
     } catch (error) {
       console.error('读取健康存储失败:', error);
-      return { heartRate: [], bloodGlucose: [], sleep: [] };
+      return { heartRate: [], heartRateMinuteAvg: [], bloodGlucose: [], sleep: [] };
     }
   }
 
   static generateMockData() {
+    return this.generateDetailedMockData(30);
+  }
+
+  static generateDetailedMockData(days = 30) {
     const data = {
       heartRate: [],
+      heartRateMinuteAvg: [],
       bloodGlucose: [],
       sleep: [],
     };
 
-    for (let i = 6; i >= 0; i--) {
+    for (let i = days - 1; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
       date.setHours(0, 0, 0, 0);
 
-      // 心率：每小时 1～3 条，便于 24 根细柱展示全天
+      // 心率：每小时 2~6 条，制造更细趋势与异常样本
       for (let h = 0; h < 24; h++) {
-        const n = 1 + Math.floor(Math.random() * 3);
+        const n = 2 + Math.floor(Math.random() * 5);
         for (let k = 0; k < n; k++) {
           const t = new Date(date);
           t.setHours(h, Math.floor(Math.random() * 58), Math.floor(Math.random() * 59), 0);
-          const base = 66 + (h / 24) * 8 + (Math.random() * 16 - 5);
+          const dayShift = ((days - i) % 9) - 4;
+          const base = 68 + (h / 24) * 7 + dayShift * 0.7 + (Math.random() * 14 - 4);
+          let value = Math.max(48, Math.min(145, Math.round(base)));
+          if (i % 8 === 0 && h >= 20 && h <= 22) value = Math.min(145, value + 18); // 偏高晚间
+          if (i % 11 === 0 && h >= 2 && h <= 4) value = Math.max(45, value - 14); // 偏低夜间
           data.heartRate.push({
             date: t.toISOString(),
-            value: Math.max(48, Math.min(135, Math.round(base))),
+            value,
           });
         }
       }
 
-      // 血糖：每小时约一条（略随机跳过若干小时更真实）
-      for (let h = 0; h < 24; h++) {
-        if (Math.random() < 0.12) continue;
+      // 血糖：重点覆盖空腹、三餐后、睡前，便于日报分析
+      [7, 10, 13, 16, 20, 22].forEach((h) => {
         const t = new Date(date);
-        t.setHours(h, 5 + Math.floor(Math.random() * 45), 0, 0);
-        const v = 4.3 + Math.sin((h / 24) * Math.PI) * 0.6 + Math.random() * 2.2 + (h >= 17 ? 0.35 : 0);
+        t.setHours(h, 5 + Math.floor(Math.random() * 35), 0, 0);
+        let v = 4.6 + Math.sin((h / 24) * Math.PI) * 0.55 + Math.random() * 1.9 + (h >= 17 ? 0.4 : 0);
+        if (i % 6 === 0 && h >= 20) v += 1.8; // 某些晚间偏高
+        if (i % 10 === 0 && h === 7) v -= 1.1; // 某些清晨偏低
         data.bloodGlucose.push({
           date: t.toISOString(),
-          value: Math.round(Math.min(9.5, Math.max(3.5, v)) * 10) / 10,
+          value: Math.round(Math.min(11.2, Math.max(3.2, v)) * 10) / 10,
         });
-      }
+      });
 
-      // 睡眠：每晚一条，含深睡/浅睡/REM/清醒
-      const total = Math.round((6.2 + Math.random() * 1.6) * 10) / 10;
-      const deep = Math.round(total * (0.22 + Math.random() * 0.08) * 10) / 10;
-      const rem = Math.round(total * (0.16 + Math.random() * 0.06) * 10) / 10;
-      const awake = Math.round((0.3 + Math.random() * 0.5) * 10) / 10;
+      // 睡眠：每晚一条，包含偶发不足和质量下降
+      let total = Math.round((6.8 + Math.random() * 1.8) * 10) / 10;
+      if (i % 7 === 0) total = Math.max(4.8, total - 1.6); // 睡眠不足日
+      if (i % 13 === 0) total = Math.min(10.5, total + 1.2); // 睡眠过长日
+      const deepRatio = i % 5 === 0 ? 0.16 + Math.random() * 0.04 : 0.21 + Math.random() * 0.08;
+      const deep = Math.round(total * deepRatio * 10) / 10;
+      const rem = Math.round(total * (0.15 + Math.random() * 0.07) * 10) / 10;
+      const awake = Math.round((i % 9 === 0 ? 1.1 : 0.35 + Math.random() * 0.45) * 10) / 10;
       const light = Math.round((total - deep - rem - awake) * 10) / 10;
       data.sleep.push({
         date: date.toISOString(),
@@ -258,6 +308,12 @@ export class DeviceService {
     }
 
     return migrateHealthPayload(data);
+  }
+
+  static async seedDetailedMockData(days = 30) {
+    const payload = this.generateDetailedMockData(days);
+    await SecureStorage.setItem(HEALTH_DATA_KEY, payload);
+    return payload;
   }
 
   // 模拟实时数据更新

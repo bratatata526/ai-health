@@ -28,6 +28,7 @@ import { AuthService } from '../services/AuthService';
 import { PersonalizedAdviceCache } from '../services/PersonalizedAdviceCache';
 import { AI_DISCLAIMER_ZH } from '../constants/aiDisclaimer';
 import { Alert } from 'react-native';
+import { sanitizeHealthAdviceText } from '../utils/sanitizeAiOutput';
 
 const { width } = Dimensions.get('window');
 
@@ -128,6 +129,110 @@ export default function ReportScreen() {
       borderRadius: 16,
     },
   };
+
+  const renderTrendInsight = (insight, options = {}) => {
+    if (!insight) return null;
+    const { unit = '', includeMinuteDetail = false, title = '趋势分析' } = options;
+    const fmt = (v) => (v == null ? '暂无' : `${v}${unit ? ` ${unit}` : ''}`);
+    return (
+      <View style={styles.trendInsightBox}>
+        <Text style={styles.trendInsightTitle}>{title}</Text>
+        <Text style={styles.trendInsightLine}>正常范围：{insight.normalRange || '暂无'}</Text>
+        <Text style={styles.trendInsightLine}>均值判断：{insight.status || '未知'}</Text>
+        <Text style={styles.trendInsightLine}>
+          统计结果：平均 {fmt(insight.average)} / 最高 {fmt(insight.max)} / 最低 {fmt(insight.min)}
+        </Text>
+        <Text style={styles.trendInsightLine}>
+          最近值：{fmt(insight.latest)}；样本量：{insight.sampleCount ?? 0}
+        </Text>
+        <Text style={styles.trendInsightLine}>数据解读：{insight.summary || '暂无解读'}</Text>
+        {Array.isArray(insight.dailyFindings) && insight.dailyFindings.length > 0 ? (
+          <Text style={styles.trendInsightLine}>
+            每日重点：
+            {insight.dailyFindings.join('；')}
+          </Text>
+        ) : null}
+        {includeMinuteDetail && insight.minuteAverage ? (
+          <>
+            <Text style={styles.trendInsightLine}>
+              分钟级心率统计（报告专用）：均值 {insight.minuteAverage.average} bpm，最高{' '}
+              {insight.minuteAverage.max} bpm，最低 {insight.minuteAverage.min} bpm，P95{' '}
+              {insight.minuteAverage.p95} bpm，标准差 {insight.minuteAverage.std} bpm。
+            </Text>
+            {insight.periodSummary ? (
+              <Text style={styles.trendInsightLine}>
+                分时段结论：静息时段(22:00-06:00)均值{' '}
+                {insight.periodSummary.rest.average ?? '暂无'} bpm（{insight.periodSummary.rest.status}）；
+                活动时段(06:00-22:00)均值 {insight.periodSummary.active.average ?? '暂无'} bpm（
+                {insight.periodSummary.active.status}）。
+              </Text>
+            ) : null}
+            {Array.isArray(insight.abnormalSegments) && insight.abnormalSegments.length > 0 ? (
+              <Text style={styles.trendInsightLine}>
+                异常连续时段：
+                {insight.abnormalSegments
+                  .map((seg) => {
+                    const typeLabel = seg.type === 'high' ? '偏高' : '偏低';
+                    const start = new Date(seg.startAt).toLocaleTimeString('zh-CN', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    const end = new Date(seg.endAt).toLocaleTimeString('zh-CN', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    });
+                    return `${typeLabel}${seg.durationMin}分钟(${start}-${end}, 均值${seg.average} bpm)`;
+                  })
+                  .join('；')}
+              </Text>
+            ) : (
+              <Text style={styles.trendInsightLine}>异常连续时段：未发现连续 3 分钟以上异常区间。</Text>
+            )}
+          </>
+        ) : null}
+      </View>
+    );
+  };
+
+  const stripMarkdownInline = (line) =>
+    String(line || '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .trim();
+
+  const renderAdviceText = () => {
+    const lines = normalizedAssistantAdvice
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!lines.length) return null;
+    return lines.map((line, idx) => {
+      const headingMatch = line.match(/^#{1,6}\s*(.+)$/);
+      if (headingMatch) {
+        return (
+          <Text key={`h-${idx}`} style={styles.assistantAdviceHeading}>
+            {stripMarkdownInline(headingMatch[1])}
+          </Text>
+        );
+      }
+      const bulletMatch = line.match(/^[-*]\s+(.+)$/);
+      if (bulletMatch) {
+        return (
+          <Text key={`b-${idx}`} style={styles.assistantAdviceBullet}>
+            {`• ${stripMarkdownInline(bulletMatch[1])}`}
+          </Text>
+        );
+      }
+      return (
+        <Text key={`p-${idx}`} style={styles.assistantAdviceParagraph}>
+          {`　　${stripMarkdownInline(line)}`}
+        </Text>
+      );
+    });
+  };
+
+  const normalizedAssistantAdvice = sanitizeHealthAdviceText(assistantAdvice || '');
 
   if (loading) {
     return (
@@ -241,6 +346,11 @@ export default function ReportScreen() {
                   bezier
                   style={styles.chart}
                 />
+                {renderTrendInsight(report.trendInsights?.heartRate, {
+                  unit: 'bpm',
+                  includeMinuteDetail: true,
+                  title: '心率分析',
+                })}
               </Card.Content>
             </Card>
             <Card style={styles.card}>
@@ -257,22 +367,75 @@ export default function ReportScreen() {
                   bezier
                   style={styles.chart}
                 />
+                {renderTrendInsight(report.trendInsights?.bloodGlucose, {
+                  unit: 'mmol/L',
+                  title: '血糖分析',
+                })}
               </Card.Content>
             </Card>
             <Card style={styles.card}>
               <Card.Content>
                 <Title style={styles.sectionTitle}>睡眠趋势</Title>
-                <LineChart
-                  data={report.trends.sleep}
-                  width={width - 64}
-                  height={220}
-                  chartConfig={{
-                    ...chartConfig,
-                    color: (opacity = 1) => `rgba(155, 89, 182, ${opacity})`,
-                  }}
-                  bezier
-                  style={styles.chart}
-                />
+                {(() => {
+                  const sleepStages = report?.trends?.sleepStages;
+                  const labels = sleepStages?.labels || [];
+                  const deep = sleepStages?.deep || [];
+                  const light = sleepStages?.light || [];
+                  const rem = sleepStages?.rem || [];
+                  const totals = sleepStages?.total || [];
+                  const maxTotal = Math.max(8, ...totals, 0.1);
+                  const trackH = 180;
+                  return (
+                    <View style={styles.sleepBarsWrap}>
+                      <View style={[styles.sleepBarsRow, { height: trackH }]}>
+                        {labels.map((lab, i) => {
+                          const d = Number(deep[i] || 0);
+                          const l = Number(light[i] || 0);
+                          const r = Number(rem[i] || 0);
+                          const total = Number(totals[i] || 0);
+                          const scale = trackH / maxTotal;
+                          return (
+                            <View key={`${lab}-${i}`} style={styles.sleepBarCol}>
+                              <View style={[styles.sleepTrack, { height: trackH }]}>
+                                <View style={[styles.sleepStack, { height: Math.max(3, total * scale) }]}>
+                                  {d > 0 ? (
+                                    <View style={[styles.sleepSegDeep, { height: Math.max(2, d * scale) }]} />
+                                  ) : null}
+                                  {r > 0 ? (
+                                    <View style={[styles.sleepSegRem, { height: Math.max(2, r * scale) }]} />
+                                  ) : null}
+                                  {l > 0 ? (
+                                    <View style={[styles.sleepSegLight, { height: Math.max(2, l * scale) }]} />
+                                  ) : null}
+                                </View>
+                              </View>
+                              <Text style={styles.sleepBarLabel}>{lab}</Text>
+                              <Text style={styles.sleepBarTotal}>{total > 0 ? `${total}h` : '-'}</Text>
+                            </View>
+                          );
+                        })}
+                      </View>
+                      <View style={styles.sleepLegendRow}>
+                        <View style={styles.sleepLegendItem}>
+                          <View style={[styles.sleepLegendDot, { backgroundColor: '#1e3a8a' }]} />
+                          <Text style={styles.sleepLegendText}>深睡</Text>
+                        </View>
+                        <View style={styles.sleepLegendItem}>
+                          <View style={[styles.sleepLegendDot, { backgroundColor: '#6366f1' }]} />
+                          <Text style={styles.sleepLegendText}>REM</Text>
+                        </View>
+                        <View style={styles.sleepLegendItem}>
+                          <View style={[styles.sleepLegendDot, { backgroundColor: '#93c5fd' }]} />
+                          <Text style={styles.sleepLegendText}>浅睡</Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })()}
+                {renderTrendInsight(report.trendInsights?.sleep, {
+                  unit: '小时',
+                  title: '睡眠分析',
+                })}
               </Card.Content>
             </Card>
           </>
@@ -300,10 +463,10 @@ export default function ReportScreen() {
                 ? '健康建议（AI 助手个性化建议）'
                 : '简要提示（规则引擎）'}
             </Title>
-            {assistantAdvice.trim().length > 0 ? (
+            {normalizedAssistantAdvice.length > 0 ? (
               <>
                 <Text style={styles.aiDisclaimer}>{AI_DISCLAIMER_ZH}</Text>
-                <Text style={styles.assistantAdviceText}>{assistantAdvice.trim()}</Text>
+                {renderAdviceText()}
               </>
             ) : (
               <>
@@ -482,6 +645,27 @@ const styles = StyleSheet.create({
   chart: {
     marginVertical: theme.spacing.sm,
     borderRadius: theme.borderRadius.md,
+    alignSelf: 'center',
+  },
+  trendInsightBox: {
+    marginTop: theme.spacing.sm,
+    padding: theme.spacing.sm,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surfaceVariant,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
+  },
+  trendInsightTitle: {
+    ...textStyles.semi,
+    color: theme.colors.text,
+    marginBottom: theme.spacing.xs,
+  },
+  trendInsightLine: {
+    ...textStyles.body,
+    color: theme.colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 19,
+    marginBottom: 2,
   },
   recommendationItem: {
     flexDirection: 'row',
@@ -552,12 +736,101 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.md,
     lineHeight: 18,
   },
-  assistantAdviceText: {
+  assistantAdviceParagraph: {
     ...textStyles.body,
     fontSize: 14,
     color: theme.colors.text,
     lineHeight: 22,
     textAlign: 'justify',
+    marginBottom: theme.spacing.xs,
+  },
+  assistantAdviceHeading: {
+    ...textStyles.title,
+    fontSize: 17,
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.xs,
+    color: theme.colors.text,
+  },
+  assistantAdviceBullet: {
+    ...textStyles.body,
+    fontSize: 14,
+    color: theme.colors.text,
+    lineHeight: 22,
+    marginBottom: 4,
+    paddingLeft: 4,
+  },
+  sleepBarsWrap: {
+    alignSelf: 'center',
+    width: width - 64,
+    marginTop: theme.spacing.sm,
+    marginBottom: theme.spacing.sm,
+  },
+  sleepBarsRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-around',
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.outlineVariant,
+    paddingBottom: 6,
+  },
+  sleepBarCol: {
+    flex: 1,
+    alignItems: 'center',
+    maxWidth: 42,
+  },
+  sleepTrack: {
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+  sleepStack: {
+    width: 12,
+    borderRadius: 5,
+    overflow: 'hidden',
+    flexDirection: 'column-reverse',
+  },
+  sleepSegDeep: {
+    width: 12,
+    backgroundColor: '#1e3a8a',
+  },
+  sleepSegRem: {
+    width: 12,
+    backgroundColor: '#6366f1',
+  },
+  sleepSegLight: {
+    width: 12,
+    backgroundColor: '#93c5fd',
+  },
+  sleepBarLabel: {
+    ...textStyles.body,
+    fontSize: 10,
+    color: theme.colors.textSecondary,
+    marginTop: 4,
+  },
+  sleepBarTotal: {
+    ...textStyles.body,
+    fontSize: 9,
+    color: theme.colors.textSecondary,
+  },
+  sleepLegendRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: theme.spacing.sm,
+  },
+  sleepLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sleepLegendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 4,
+  },
+  sleepLegendText: {
+    ...textStyles.body,
+    fontSize: 11,
+    color: theme.colors.textSecondary,
   },
   adviceHint: {
     ...textStyles.body,

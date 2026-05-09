@@ -109,6 +109,115 @@ export function buildTrendLineSvg(title, labels, values, strokeColor, unitLabel 
   </div>`;
 }
 
+function buildTrendInsightHtml(insight, unit, includeMinuteDetail = false, title = '趋势分析') {
+  if (!insight) return '';
+  const fmt = (v) => (v == null ? '暂无' : `${v}${unit ? ` ${unit}` : ''}`);
+  const minuteLine =
+    includeMinuteDetail && insight.minuteAverage
+      ? `<li>分钟级心率统计（报告专用）：均值 ${escapeHtml(String(insight.minuteAverage.average))} bpm，最高 ${escapeHtml(String(insight.minuteAverage.max))} bpm，最低 ${escapeHtml(String(insight.minuteAverage.min))} bpm，P95 ${escapeHtml(String(insight.minuteAverage.p95))} bpm，标准差 ${escapeHtml(String(insight.minuteAverage.std))} bpm。</li>`
+      : '';
+  const periodLine =
+    includeMinuteDetail && insight.periodSummary
+      ? `<li>分时段结论：静息时段(22:00-06:00)均值 ${escapeHtml(String(insight.periodSummary.rest?.average ?? '暂无'))} bpm（${escapeHtml(String(insight.periodSummary.rest?.status || '未知'))}）；活动时段(06:00-22:00)均值 ${escapeHtml(String(insight.periodSummary.active?.average ?? '暂无'))} bpm（${escapeHtml(String(insight.periodSummary.active?.status || '未知'))}）。</li>`
+      : '';
+  const abnormalLine =
+    includeMinuteDetail && Array.isArray(insight.abnormalSegments)
+      ? insight.abnormalSegments.length
+        ? `<li>异常连续时段：${insight.abnormalSegments
+            .map((seg) => {
+              const typeLabel = seg.type === 'high' ? '偏高' : '偏低';
+              const start = new Date(seg.startAt).toLocaleTimeString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+              const end = new Date(seg.endAt).toLocaleTimeString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+              });
+              return `${typeLabel}${seg.durationMin}分钟(${start}-${end}, 均值${seg.average} bpm)`;
+            })
+            .join('；')}</li>`
+        : '<li>异常连续时段：未发现连续 3 分钟以上异常区间。</li>'
+      : '';
+  const dailyLine =
+    Array.isArray(insight.dailyFindings) && insight.dailyFindings.length > 0
+      ? `<li>每日重点：${insight.dailyFindings.map((x) => escapeHtml(String(x))).join('；')}</li>`
+      : '';
+  return `
+    <div class="trend-insight">
+      <div class="trend-insight-title">${escapeHtml(title)}</div>
+      <ul>
+        <li>正常范围：${escapeHtml(insight.normalRange || '暂无')}</li>
+        <li>均值判断：${escapeHtml(insight.status || '未知')}</li>
+        <li>统计结果：平均 ${fmt(insight.average)} / 最高 ${fmt(insight.max)} / 最低 ${fmt(insight.min)}</li>
+        <li>最近值：${fmt(insight.latest)}；样本量：${escapeHtml(String(insight.sampleCount ?? 0))}</li>
+        <li>数据解读：${escapeHtml(insight.summary || '暂无解读')}</li>
+        ${dailyLine}
+        ${minuteLine}
+        ${periodLine}
+        ${abnormalLine}
+      </ul>
+    </div>
+  `;
+}
+
+function formatAdviceParagraphsHtml(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return '';
+  const lines = clean
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const stripInline = (line) =>
+    String(line || '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .trim();
+  return lines
+    .map((line) => {
+      const heading = line.match(/^#{1,6}\s*(.+)$/);
+      if (heading) {
+        return `<div class="ai-heading">${escapeHtml(stripInline(heading[1]))}</div>`;
+      }
+      const bullet = line.match(/^[-*]\s+(.+)$/);
+      if (bullet) {
+        return `<div class="ai-bullet">• ${escapeHtml(stripInline(bullet[1]))}</div>`;
+      }
+      return `<p class="ai-paragraph">　　${escapeHtml(stripInline(line))}</p>`;
+    })
+    .join('');
+}
+
+function markdownInlineToHtml(raw) {
+  const s = escapeHtml(String(raw || ''));
+  return s
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>');
+}
+
+function formatMarkdownBlockHtml(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return '<p class="md-paragraph">暂无</p>';
+  const lines = clean
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines
+    .map((line) => {
+      const heading = line.match(/^#{1,6}\s*(.+)$/);
+      if (heading) {
+        return `<div class="md-heading">${markdownInlineToHtml(heading[1])}</div>`;
+      }
+      const bullet = line.match(/^[-*]\s+(.+)$/);
+      if (bullet) {
+        return `<div class="md-bullet">• ${markdownInlineToHtml(bullet[1])}</div>`;
+      }
+      return `<p class="md-paragraph">${markdownInlineToHtml(line)}</p>`;
+    })
+    .join('');
+}
+
 /**
  * @param {{
  *   displayName: string,
@@ -123,6 +232,7 @@ export function buildHealthReportPdfHtml(opts) {
     report,
     assistantAdvice,
     generatedAtDisplay,
+    reportTitle,
   } = opts;
 
   const period =
@@ -161,6 +271,8 @@ export function buildHealthReportPdfHtml(opts) {
     '#9b59b6',
     '小时'
   );
+  const trendInsights = report.trendInsights || {};
+  const tongue = report.tongueAnalysis || null;
 
   const ss = report.sleepStages || {};
   const fmtSleepStageHour = (v) =>
@@ -185,7 +297,7 @@ export function buildHealthReportPdfHtml(opts) {
             <h2>健康建议（AI 助手个性化建议）</h2>
             <p class="disclaimer">${aiDisclaimer}</p>
           </div>
-          <div class="body-text">${escapeHtml(assistantAdvice.trim()).replace(/\n/g, '<br/>')}</div>
+          <div class="body-text">${formatAdviceParagraphsHtml(assistantAdvice)}</div>
         </section>`
       : `<section class="section">
           <div class="block-head">
@@ -199,11 +311,63 @@ export function buildHealthReportPdfHtml(opts) {
           </ul>
         </section>`;
 
+  const tongueBlock = tongue
+    ? `<section class="section">
+        <div class="block-head">
+          <h2>中医体质分析（舌相AI）</h2>
+        </div>
+        <p class="muted">最近舌诊时间：${escapeHtml(formatZhDate(tongue.analyzedAt)) || '未知'}</p>
+        <div class="tongue-images">
+          ${
+            tongue.originalImage
+              ? `<div class="tongue-image-card">
+                   <div class="tongue-image-title">舌诊原图</div>
+                   <img src="${escapeHtml(tongue.originalImage)}" alt="舌诊原图" />
+                 </div>`
+              : ''
+          }
+          ${
+            tongue.segmentedImage
+              ? `<div class="tongue-image-card">
+                   <div class="tongue-image-title">舌头图像分析结果</div>
+                   <img src="${escapeHtml(tongue.segmentedImage)}" alt="舌头图像分析结果" />
+                 </div>`
+              : ''
+          }
+        </div>
+        <div class="trend-insight">
+          <div class="trend-insight-title">舌象结构化特征</div>
+          <ul>
+            <li>舌色：${escapeHtml(String(tongue.features?.tongueColor || '未知'))}</li>
+            <li>苔色：${escapeHtml(String(tongue.features?.coatingColor || '未知'))}</li>
+            <li>厚薄：${escapeHtml(String(tongue.features?.thickness || '未知'))}</li>
+            <li>腐腻：${escapeHtml(String(tongue.features?.rotGreasy || '未知'))}</li>
+          </ul>
+        </div>
+        <div class="trend-insight">
+          <div class="trend-insight-title">体质与调理结论</div>
+          <div class="tongue-text-block">
+            <div class="tongue-text-title">体质/证型倾向</div>
+            ${formatMarkdownBlockHtml(tongue.constitution || '暂无明确结论')}
+          </div>
+          <div class="tongue-text-block">
+            <div class="tongue-text-title">调理建议</div>
+            ${formatMarkdownBlockHtml(tongue.conditioningAdvice || '暂无')}
+          </div>
+          <div class="tongue-text-block">
+            <div class="tongue-text-title">风险提示</div>
+            ${formatMarkdownBlockHtml(tongue.riskTips || '暂无')}
+          </div>
+        </div>
+      </section>`
+    : '';
+
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(reportTitle || `健康报告-${generated}`)}</title>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -260,8 +424,89 @@ export function buildHealthReportPdfHtml(opts) {
     }
     .overview-table th { background: #f5f5f5; width: 28%; }
     .score-row { font-size: 18px; font-weight: 700; color: #2563eb; }
-    .chart-block { margin: 12px 0; }
+    .chart-block { margin: 12px 0; text-align: center; }
     .chart-title { font-size: 11px; color: #888; margin-bottom: 4px; display: none; }
+    .trend-insight {
+      margin: 6px 0 14px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px 10px;
+    }
+    .trend-insight-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #334155;
+      margin-bottom: 4px;
+    }
+    .trend-insight ul {
+      margin: 0;
+      padding-left: 16px;
+    }
+    .trend-insight li {
+      margin: 2px 0;
+      color: #475569;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .tongue-images {
+      display: flex;
+      gap: 10px;
+      margin: 10px 0;
+    }
+    .tongue-image-card {
+      flex: 1;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px;
+      background: #f8fafc;
+    }
+    .tongue-image-title {
+      font-size: 11px;
+      color: #475569;
+      margin-bottom: 6px;
+    }
+    .tongue-image-card img {
+      width: 100%;
+      max-height: 240px;
+      object-fit: contain;
+      display: block;
+      background: #fff;
+      border-radius: 4px;
+    }
+    .tongue-text-block {
+      margin-top: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      background: #ffffff;
+      border: 1px dashed #cbd5e1;
+    }
+    .tongue-text-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #334155;
+      margin-bottom: 4px;
+    }
+    .md-heading {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 4px 0;
+    }
+    .md-bullet {
+      font-size: 12px;
+      line-height: 1.6;
+      color: #374151;
+      margin: 2px 0;
+      padding-left: 2px;
+    }
+    .md-paragraph {
+      font-size: 12px;
+      line-height: 1.65;
+      color: #374151;
+      margin: 2px 0;
+      text-indent: 2em;
+    }
     .disclaimer {
       font-size: 11px;
       color: #b45309;
@@ -279,6 +524,24 @@ export function buildHealthReportPdfHtml(opts) {
       word-break: break-word;
       orphans: 3;
       widows: 3;
+    }
+    .ai-heading {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 10px 0 6px;
+    }
+    .ai-bullet {
+      font-size: 13px;
+      line-height: 1.65;
+      color: #374151;
+      margin: 2px 0;
+      padding-left: 4px;
+    }
+    .ai-paragraph {
+      margin: 0 0 8px;
+      text-indent: 2em;
+      line-height: 1.7;
     }
     .muted {
       color: #777;
@@ -328,9 +591,13 @@ export function buildHealthReportPdfHtml(opts) {
   <section class="section">
     <h2>趋势折线图</h2>
     ${svgHr}
+    ${buildTrendInsightHtml(trendInsights.heartRate, 'bpm', true, '心率分析')}
     ${svgBg}
+    ${buildTrendInsightHtml(trendInsights.bloodGlucose, 'mmol/L', false, '血糖分析')}
     ${svgSl}
+    ${buildTrendInsightHtml(trendInsights.sleep, '小时', false, '睡眠分析')}
   </section>
+  ${tongueBlock}
 
   ${aiAnalysisHtml}
   ${adviceBlock}

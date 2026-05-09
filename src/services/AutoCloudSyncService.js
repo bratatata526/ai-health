@@ -9,6 +9,7 @@ const WATCHED_PREFIXES = [
   '@devices',
   '@medicine_reminders',
   '@medicine_intake_logs',
+  '@tongue_analysis_history',
   '@user_profile',
 ];
 

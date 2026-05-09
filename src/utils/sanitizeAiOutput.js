@@ -26,6 +26,16 @@ export function sanitizeHealthAdviceText(raw) {
 
   // 中文逗号或顿号三连以上
   s = s.replace(/[，,、]{4,}/g, '，');
+  // 连续双逗号/多逗号
+  s = s.replace(/[，,]\s*[，,]+/g, '，');
+  // 修复「，。」/「,。」等不自然标点衔接
+  s = s.replace(/[，,]\s*[。\.]/g, '。');
+  // 中文句号连写
+  s = s.replace(/[。\.]{3,}/g, '。');
+  // 去掉 markdown 粗体符号，防止残留 *
+  s = s.replace(/\*\*(.*?)\*\*/g, '$1');
+  // 去掉孤立 *（非乘法场景）
+  s = s.replace(/(^|\s)\*(?=\S)/g, '$1');
 
   // 「解析」等小词灾难性复读；极端情况整块截断前文
   s = stripRunawayJiexiBlock(s);

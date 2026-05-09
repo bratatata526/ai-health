@@ -588,6 +588,21 @@ export default function DeviceScreen() {
                 约 {Math.round(heartRateAlertMonitor.cooldownMs / 1000)}s 内同类仅提醒一次）
               </Text>
             )}
+            <Button
+              mode="text"
+              icon="database-plus"
+              onPress={async () => {
+                try {
+                  await DeviceService.seedDetailedMockData(30);
+                  await loadData();
+                  Alert.alert('已填充模拟数据', '已生成近30天心率/血糖/睡眠模拟数据，可立即查看趋势分析效果。');
+                } catch (e) {
+                  Alert.alert('操作失败', e?.message || '填充模拟数据失败');
+                }
+              }}
+            >
+              填充30天模拟数据（用于预览报告）
+            </Button>
           </Card.Content>
         </Card>
 

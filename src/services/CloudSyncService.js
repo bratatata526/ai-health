@@ -11,6 +11,7 @@ const SNAPSHOT_KEYS = [
   '@devices',
   '@medicine_reminders',
   '@medicine_intake_logs',
+  '@tongue_analysis_history',
 ];
 
 async function httpJson(path, { method = 'GET', token, body } = {}) {

@@ -74,6 +74,64 @@ function summarizeNumericSeries(entries, valueLabel, name) {
     block += `  · ${formatCnDateTime(x.t)} → ${x.v} ${valueLabel}\n`;
   });
 
+  if (name === '心率') {
+    const minuteBuckets = new Map();
+    items.forEach((x) => {
+      const k = `${x.t.getFullYear()}-${x.t.getMonth()}-${x.t.getDate()}-${x.t.getHours()}-${x.t.getMinutes()}`;
+      const curr = minuteBuckets.get(k) || { sum: 0, count: 0, ts: x.t.getTime() };
+      curr.sum += x.v;
+      curr.count += 1;
+      minuteBuckets.set(k, curr);
+    });
+    const minuteVals = Array.from(minuteBuckets.values())
+      .sort((a, b) => a.ts - b.ts)
+      .map((b) => b.sum / b.count);
+    if (minuteVals.length > 0) {
+      const p95 = (() => {
+        const sortedVals = [...minuteVals].sort((a, b) => a - b);
+        const pos = (sortedVals.length - 1) * 0.95;
+        const base = Math.floor(pos);
+        const rest = pos - base;
+        return sortedVals[base + 1] != null
+          ? sortedVals[base] + rest * (sortedVals[base + 1] - sortedVals[base])
+          : sortedVals[base];
+      })();
+      const nightVals = items
+        .filter((x) => x.hour < 6 || x.hour >= 22)
+        .map((x) => x.v);
+      const dayVals2 = items
+        .filter((x) => x.hour >= 6 && x.hour < 22)
+        .map((x) => x.v);
+      if (nightVals.length) {
+        block += `- 静息时段(22:00-06:00)均值约 ${mean(nightVals).toFixed(1)} ${valueLabel}\n`;
+      }
+      if (dayVals2.length) {
+        block += `- 活动时段(06:00-22:00)均值约 ${mean(dayVals2).toFixed(1)} ${valueLabel}\n`;
+      }
+      block += `- 分钟级统计：均值约 ${mean(minuteVals).toFixed(1)} ${valueLabel}，95分位约 ${p95.toFixed(1)} ${valueLabel}\n`;
+
+      let highRun = 0;
+      let lowRun = 0;
+      let maxHighRun = 0;
+      let maxLowRun = 0;
+      minuteVals.forEach((v) => {
+        if (v > 100) {
+          highRun += 1;
+          maxHighRun = Math.max(maxHighRun, highRun);
+        } else {
+          highRun = 0;
+        }
+        if (v < 60) {
+          lowRun += 1;
+          maxLowRun = Math.max(maxLowRun, lowRun);
+        } else {
+          lowRun = 0;
+        }
+      });
+      block += `- 异常连续时长：偏高最长约 ${maxHighRun} 分钟，偏低最长约 ${maxLowRun} 分钟\n`;
+    }
+  }
+
   return `${block}\n`;
 }
 
@@ -142,6 +200,40 @@ function summarizeMedicines(medicines) {
   return `${block}\n`;
 }
 
+function summarizeTongueInsight(tongueInsight) {
+  if (!tongueInsight || typeof tongueInsight !== 'object') {
+    return '【舌诊】暂无可用舌诊结果。\n';
+  }
+  const {
+    analyzedAt,
+    features,
+    constitution,
+    conditioningAdvice,
+    riskTips,
+  } = tongueInsight;
+  const lines = [];
+  lines.push('【舌诊】（来自应用内舌相 AI 检测）');
+  if (analyzedAt) {
+    const d = new Date(analyzedAt);
+    lines.push(`- 最近检测时间：${formatCnDateTime(d)}`);
+  }
+  if (features) {
+    lines.push(
+      `- 结构化特征：舌色 ${features.tongueColor || '未知'}；苔色 ${features.coatingColor || '未知'}；苔厚薄 ${features.thickness || '未知'}；腐腻 ${features.rotGreasy || '未知'}`
+    );
+  }
+  if (constitution) {
+    lines.push(`- 中医体质/证型倾向：${constitution}`);
+  }
+  if (conditioningAdvice) {
+    lines.push(`- 舌诊调理建议：${conditioningAdvice}`);
+  }
+  if (riskTips) {
+    lines.push(`- 舌诊风险提示：${riskTips}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 /**
  * 供「个性化健康建议」一节使用的纯文本上下文（已由应用侧预处理，请勿再混入原始 JSON 数组）。
  * @param {{ heartRate?: any[], bloodGlucose?: any[], sleep?: any[], medicines?: any[] }} raw
@@ -151,6 +243,7 @@ export function buildHealthAdviceSummary(raw) {
   const bloodGlucose = raw?.bloodGlucose || [];
   const sleep = raw?.sleep || [];
   const medicines = raw?.medicines || [];
+  const tongueInsight = raw?.tongueInsight || null;
 
   const parts = [];
   parts.push('=== 数据摘要（应用已预先统计，请你仅基于摘要中的数字与日期表述进行分析，严禁编造不存在的字母串或错乱日期格式）===\n');
@@ -158,13 +251,15 @@ export function buildHealthAdviceSummary(raw) {
   parts.push(summarizeNumericSeries(bloodGlucose, 'mmol/L', '血糖'));
   parts.push(summarizeSleep(sleep));
   parts.push(summarizeMedicines(medicines));
+  parts.push(summarizeTongueInsight(tongueInsight));
 
   const hasAnything =
     (Array.isArray(heartRate) && heartRate.some((x) => Number.isFinite(Number(x?.value)))) ||
     (Array.isArray(bloodGlucose) && bloodGlucose.some((x) => Number.isFinite(Number(x?.value)))) ||
     (Array.isArray(sleep) &&
       sleep.some((x) => Number.isFinite(Number(x?.totalHours)))) ||
-    medicines.length > 0;
+    medicines.length > 0 ||
+    Boolean(tongueInsight);
 
   if (!hasAnything) {
     parts.push('【说明】摘要中几乎没有可用指标记录。请温和提示用户先连接设备或手动记录数据后再生成个性化建议。\n');
