@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -19,7 +19,7 @@ import {
   Switch,
   ActivityIndicator,
 } from 'react-native-paper';
-import { LineChart } from 'react-native-chart-kit';
+import { LineChart, StackedBarChart } from 'react-native-chart-kit';
 import { Ionicons } from '@expo/vector-icons';
 import { theme, textStyles } from '../theme';
 import { ReportService } from '../services/ReportService';
@@ -233,6 +233,23 @@ export default function ReportScreen() {
   };
 
   const normalizedAssistantAdvice = sanitizeHealthAdviceText(assistantAdvice || '');
+  const sleepStages = report?.trends?.sleepStages;
+  const sleepStageChartData = useMemo(() => {
+    const labels = sleepStages?.labels || [];
+    const deep = sleepStages?.deep || [];
+    const rem = sleepStages?.rem || [];
+    const light = sleepStages?.light || [];
+    return {
+      labels,
+      legend: ['深睡', 'REM', '浅睡'],
+      data: labels.map((_, i) => [
+        Number(deep[i] || 0),
+        Number(rem[i] || 0),
+        Number(light[i] || 0),
+      ]),
+      barColors: ['#7c83f7', '#98a2ff', '#c3c9ff'],
+    };
+  }, [sleepStages]);
 
   if (loading) {
     return (
@@ -376,62 +393,40 @@ export default function ReportScreen() {
             <Card style={styles.card}>
               <Card.Content>
                 <Title style={styles.sectionTitle}>睡眠趋势</Title>
-                {(() => {
-                  const sleepStages = report?.trends?.sleepStages;
-                  const labels = sleepStages?.labels || [];
-                  const deep = sleepStages?.deep || [];
-                  const light = sleepStages?.light || [];
-                  const rem = sleepStages?.rem || [];
-                  const totals = sleepStages?.total || [];
-                  const maxTotal = Math.max(8, ...totals, 0.1);
-                  const trackH = 180;
-                  return (
-                    <View style={styles.sleepBarsWrap}>
-                      <View style={[styles.sleepBarsRow, { height: trackH }]}>
-                        {labels.map((lab, i) => {
-                          const d = Number(deep[i] || 0);
-                          const l = Number(light[i] || 0);
-                          const r = Number(rem[i] || 0);
-                          const total = Number(totals[i] || 0);
-                          const scale = trackH / maxTotal;
-                          return (
-                            <View key={`${lab}-${i}`} style={styles.sleepBarCol}>
-                              <View style={[styles.sleepTrack, { height: trackH }]}>
-                                <View style={[styles.sleepStack, { height: Math.max(3, total * scale) }]}>
-                                  {d > 0 ? (
-                                    <View style={[styles.sleepSegDeep, { height: Math.max(2, d * scale) }]} />
-                                  ) : null}
-                                  {r > 0 ? (
-                                    <View style={[styles.sleepSegRem, { height: Math.max(2, r * scale) }]} />
-                                  ) : null}
-                                  {l > 0 ? (
-                                    <View style={[styles.sleepSegLight, { height: Math.max(2, l * scale) }]} />
-                                  ) : null}
-                                </View>
-                              </View>
-                              <Text style={styles.sleepBarLabel}>{lab}</Text>
-                              <Text style={styles.sleepBarTotal}>{total > 0 ? `${total}h` : '-'}</Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-                      <View style={styles.sleepLegendRow}>
-                        <View style={styles.sleepLegendItem}>
-                          <View style={[styles.sleepLegendDot, { backgroundColor: '#1e3a8a' }]} />
-                          <Text style={styles.sleepLegendText}>深睡</Text>
-                        </View>
-                        <View style={styles.sleepLegendItem}>
-                          <View style={[styles.sleepLegendDot, { backgroundColor: '#6366f1' }]} />
-                          <Text style={styles.sleepLegendText}>REM</Text>
-                        </View>
-                        <View style={styles.sleepLegendItem}>
-                          <View style={[styles.sleepLegendDot, { backgroundColor: '#93c5fd' }]} />
-                          <Text style={styles.sleepLegendText}>浅睡</Text>
-                        </View>
-                      </View>
-                    </View>
-                  );
-                })()}
+                <StackedBarChart
+                  data={sleepStageChartData}
+                  width={width - 72}
+                  height={220}
+                  fromZero
+                  segments={4}
+                  yAxisSuffix="h"
+                  formatYLabel={(label) => {
+                    const n = Number(label);
+                    if (!Number.isFinite(n)) return label;
+                    return String(Math.round(n / 2) * 2);
+                  }}
+                  chartConfig={{
+                    ...chartConfig,
+                    color: (opacity = 1) => `rgba(124, 131, 247, ${opacity})`,
+                    barPercentage: 0.56,
+                  }}
+                  style={styles.sleepChart}
+                  hideLegend
+                />
+                <View style={styles.sleepLegendRow}>
+                  <View style={styles.sleepLegendItem}>
+                    <View style={[styles.sleepLegendDot, { backgroundColor: '#7c83f7' }]} />
+                    <Text style={styles.sleepLegendText}>深睡</Text>
+                  </View>
+                  <View style={styles.sleepLegendItem}>
+                    <View style={[styles.sleepLegendDot, { backgroundColor: '#98a2ff' }]} />
+                    <Text style={styles.sleepLegendText}>REM</Text>
+                  </View>
+                  <View style={styles.sleepLegendItem}>
+                    <View style={[styles.sleepLegendDot, { backgroundColor: '#c3c9ff' }]} />
+                    <Text style={styles.sleepLegendText}>浅睡</Text>
+                  </View>
+                </View>
                 {renderTrendInsight(report.trendInsights?.sleep, {
                   unit: '小时',
                   title: '睡眠分析',
@@ -647,6 +642,12 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     alignSelf: 'center',
   },
+  sleepChart: {
+    marginVertical: theme.spacing.sm,
+    borderRadius: theme.borderRadius.md,
+    alignSelf: 'center',
+    marginLeft: -6,
+  },
   trendInsightBox: {
     marginTop: theme.spacing.sm,
     padding: theme.spacing.sm,
@@ -759,63 +760,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     paddingLeft: 4,
   },
-  sleepBarsWrap: {
-    alignSelf: 'center',
-    width: width - 64,
-    marginTop: theme.spacing.sm,
-    marginBottom: theme.spacing.sm,
-  },
-  sleepBarsRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-around',
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.outlineVariant,
-    paddingBottom: 6,
-  },
-  sleepBarCol: {
-    flex: 1,
-    alignItems: 'center',
-    maxWidth: 42,
-  },
-  sleepTrack: {
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  sleepStack: {
-    width: 12,
-    borderRadius: 5,
-    overflow: 'hidden',
-    flexDirection: 'column-reverse',
-  },
-  sleepSegDeep: {
-    width: 12,
-    backgroundColor: '#1e3a8a',
-  },
-  sleepSegRem: {
-    width: 12,
-    backgroundColor: '#6366f1',
-  },
-  sleepSegLight: {
-    width: 12,
-    backgroundColor: '#93c5fd',
-  },
-  sleepBarLabel: {
-    ...textStyles.body,
-    fontSize: 10,
-    color: theme.colors.textSecondary,
-    marginTop: 4,
-  },
-  sleepBarTotal: {
-    ...textStyles.body,
-    fontSize: 9,
-    color: theme.colors.textSecondary,
-  },
   sleepLegendRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 12,
-    marginTop: theme.spacing.sm,
+    gap: 14,
+    marginTop: theme.spacing.xs,
+    marginBottom: theme.spacing.xs,
   },
   sleepLegendItem: {
     flexDirection: 'row',
@@ -829,7 +779,7 @@ const styles = StyleSheet.create({
   },
   sleepLegendText: {
     ...textStyles.body,
-    fontSize: 11,
+    fontSize: 12,
     color: theme.colors.textSecondary,
   },
   adviceHint: {

@@ -229,13 +229,17 @@ export default function App() {
         ) : !authed ? (
           <AuthScreen onAuthed={async () => setAuthed(await AuthService.isLoggedIn())} />
         ) : (
-          <View style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+          <View style={{ flex: 1, position: 'relative', overflow: 'visible' }}>
           <Tab.Navigator
             screenOptions={({ route }) => ({
               tabBarIcon: ({ focused, color, size }) => {
                 // AI 助手使用自定义 SVG 图标
                 if (route.name === 'AI助手') {
-                  return <AIIcon size={size} color={color} focused={focused} />;
+                  return (
+                    <View style={styles.aiTabIconWrap}>
+                      <AIIcon size={Math.max(18, size - 3)} color={color} focused={focused} />
+                    </View>
+                  );
                 }
 
                 // 其他页面使用 Ionicons
@@ -259,10 +263,17 @@ export default function App() {
               tabBarStyle: {
                 backgroundColor: theme.colors.surface,
                 borderTopColor: theme.colors.outlineVariant,
+                height: Platform.OS === 'android' ? 68 : 74,
+                paddingTop: Platform.OS === 'android' ? 3 : 6,
+                paddingBottom: Platform.OS === 'android' ? 6 : 8,
+              },
+              tabBarIconStyle: {
+                marginTop: 1,
               },
               tabBarLabelStyle: {
                 fontFamily: appFontFamilies.regular,
                 fontSize: 12,
+                marginTop: 2,
                 paddingBottom: 2,
               },
               headerStyle: {
@@ -331,6 +342,12 @@ const styles = StyleSheet.create({
   logo: {
     width: 120,
     height: 40,
+  },
+  aiTabIconWrap: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 0,
+    paddingBottom: 1,
   },
   loadingContainer: {
     flex: 1,

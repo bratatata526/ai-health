@@ -309,7 +309,13 @@ export default function AIScreen() {
             </Button>
 
             {adviceText ? (
-              <ScrollView style={styles.resultBox}>
+              <ScrollView
+                style={styles.resultBox}
+                contentContainerStyle={styles.resultBoxContent}
+                nestedScrollEnabled
+                showsVerticalScrollIndicator
+                persistentScrollbar
+              >
                 <Text style={styles.resultText}>{adviceText}</Text>
                 <Paragraph style={styles.adviceDisclaimer}>{AI_DISCLAIMER_ZH}</Paragraph>
               </ScrollView>
@@ -472,11 +478,14 @@ const styles = StyleSheet.create({
   resultBox: {
     marginTop: theme.spacing.md,
     maxHeight: 420,
-    padding: theme.spacing.sm,
     borderWidth: 1,
     borderColor: theme.colors.outlineVariant,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surfaceVariant,
+  },
+  resultBoxContent: {
+    padding: theme.spacing.sm,
+    paddingRight: theme.spacing.md,
   },
   resultText: {
     fontFamily: appFontFamilies.regular,
