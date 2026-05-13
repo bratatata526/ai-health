@@ -22,6 +22,7 @@ import { MedicineService } from '../services/MedicineService';
 import { DeviceService } from '../services/DeviceService';
 import { PersonalizedAdviceCache } from '../services/PersonalizedAdviceCache';
 import { AI_DISCLAIMER_ZH } from '../constants/aiDisclaimer';
+import Markdown from 'react-native-markdown-display';
 
 /** Dialog 使用 MD3 elevation.level3（主题里常为淡紫Tint），此处强制纯白底与卡片一致，避免看起来像「透明无底」 */
 const dialogSurfaceTheme = {
@@ -316,7 +317,7 @@ export default function AIScreen() {
                 showsVerticalScrollIndicator
                 persistentScrollbar
               >
-                <Text style={styles.resultText}>{adviceText}</Text>
+                <Markdown style={markdownStyles}>{adviceText}</Markdown>
                 <Paragraph style={styles.adviceDisclaimer}>{AI_DISCLAIMER_ZH}</Paragraph>
               </ScrollView>
             ) : null}
@@ -345,7 +346,7 @@ export default function AIScreen() {
                 style={{ maxHeight: 420 }}
                 contentContainerStyle={{ paddingVertical: theme.spacing.sm }}
               >
-                <Text style={styles.resultText}>{interactionResult || '暂无结果'}</Text>
+                <Markdown style={markdownStyles}>{interactionResult || '暂无结果'}</Markdown>
               </ScrollView>
             </Dialog.ScrollArea>
           )}
@@ -516,4 +517,79 @@ const styles = StyleSheet.create({
     paddingVertical: theme.spacing.lg,
   },
 });
+
+const markdownStyles = {
+  body: {
+    fontFamily: appFontFamilies.regular,
+    color: theme.colors.text,
+    lineHeight: 22,
+  },
+  heading1: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
+    fontSize: 20,
+    marginTop: 16,
+    marginBottom: 8,
+    color: theme.colors.text,
+  },
+  heading2: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
+    fontSize: 18,
+    marginTop: 14,
+    marginBottom: 6,
+    color: theme.colors.text,
+  },
+  heading3: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
+    fontSize: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    color: theme.colors.text,
+  },
+  paragraph: {
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  list_item: {
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  bullet_list: {
+    marginLeft: 16,
+  },
+  ordered_list: {
+    marginLeft: 16,
+  },
+  strong: {
+    fontWeight: 'bold',
+  },
+  em: {
+    fontStyle: 'italic',
+  },
+  code_inline: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: theme.colors.surfaceVariant,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+    fontSize: 14,
+  },
+  code_block: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: theme.colors.surfaceVariant,
+    padding: 12,
+    borderRadius: 8,
+    marginVertical: 8,
+    fontSize: 14,
+  },
+  blockquote: {
+    borderLeftWidth: 4,
+    borderLeftColor: theme.colors.outlineVariant,
+    paddingLeft: 12,
+    marginLeft: 8,
+    marginVertical: 8,
+  },
+};
 
