@@ -113,47 +113,6 @@ export default function MedicineScreen() {
     return new Map(medicines.map((m) => [m.id, m]));
   }, [medicines]);
 
-  const fileToDataUrl = (file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-      reader.onerror = () => reject(new Error('读取图片失败'));
-      reader.readAsDataURL(file);
-    });
-
-  const toPersistableImageUri = async (asset) => {
-    if (!asset) return null;
-    if (typeof asset.uri === 'string' && asset.uri.startsWith('data:')) {
-      return asset.uri;
-    }
-
-    // Web 端优先将 File 转为 data URL，避免 blob: 地址在刷新后失效
-    if (Platform.OS === 'web' && asset.file instanceof File) {
-      try {
-        const dataUrl = await fileToDataUrl(asset.file);
-        if (dataUrl) return dataUrl;
-      } catch (e) {
-        console.warn('转换图片为 data URL 失败，将回退到原始 URI:', e);
-      }
-    }
-
-    return asset.uri || null;
-  };
-
-  const appendSelectedAssets = async (assets) => {
-    const mapped = await Promise.all((assets || []).map((asset) => toPersistableImageUri(asset)));
-    const validUris = mapped.filter((uri) => typeof uri === 'string' && uri.trim().length > 0);
-    if (validUris.length === 0) return;
-
-    const newImages = [...selectedImages, ...validUris];
-    if (newImages.length > 9) {
-      Alert.alert('提示', '最多只能上传9张图片，已自动选择前9张');
-      setSelectedImages(newImages.slice(0, 9));
-    } else {
-      setSelectedImages(newImages);
-    }
-  };
-
   const formatTime = (iso) => {
     try {
       const d = new Date(iso);
@@ -836,7 +795,14 @@ export default function MedicineScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        await appendSelectedAssets(result.assets);
+        const newImages = [...selectedImages, ...result.assets.map(asset => asset.uri)];
+        if (newImages.length > 9) {
+          Alert.alert('提示', '最多只能上传9张图片，已自动选择前9张');
+          setSelectedImages(newImages.slice(0, 9));
+        } else {
+          setSelectedImages(newImages);
+        }
+        
         // 上传照片后，不自动识别，等待用户点击OCR识别按钮
         setDialogVisible(true);
       }
@@ -873,7 +839,14 @@ export default function MedicineScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        await appendSelectedAssets(result.assets);
+        const newImages = [...selectedImages, ...result.assets.map(asset => asset.uri)];
+        if (newImages.length > 9) {
+          Alert.alert('提示', '最多只能上传9张图片，已自动选择前9张');
+          setSelectedImages(newImages.slice(0, 9));
+        } else {
+          setSelectedImages(newImages);
+        }
+        
         // 上传照片后，不自动识别，等待用户点击OCR识别按钮
         setDialogVisible(true);
       }
@@ -971,6 +944,11 @@ export default function MedicineScreen() {
           }
         : {};
 
+      // 持久化图片：Web 端转 dataURL；Native 端拷贝到 documentDirectory，
+      // 避免保存后因临时文件/Blob 失效导致列表中缩略图空白。
+      const persistedImages = await MedicineService.persistImages(selectedImages);
+      const coverImage = persistedImages[0] || selectedImages[0];
+
       if (editingMedicine) {
         // 更新现有药品
         const updatedMedicine = {
@@ -978,8 +956,8 @@ export default function MedicineScreen() {
           dosage,
           frequency,
           ...leafletFields,
-          images: selectedImages,
-          image: selectedImages[0],
+          images: persistedImages,
+          image: coverImage,
         };
         await MedicineService.updateMedicine(editingMedicine.id, updatedMedicine);
         Alert.alert('成功', '药品信息已更新，提醒已重新设置');
@@ -995,8 +973,8 @@ export default function MedicineScreen() {
           dosage,
           frequency,
           ...leafletFields,
-          images: selectedImages,
-          image: selectedImages[0],
+          images: persistedImages,
+          image: coverImage,
           createdAt: new Date().toISOString(),
           reminderConfig: {
             enabled: true,
@@ -1123,20 +1101,18 @@ export default function MedicineScreen() {
               <View key={medicine.id} style={styles.medicineCardWrap}>
               <Card style={styles.medicineCard}>
                 {images.length > 0 && (
-                  <ScrollView 
-                    horizontal 
-                    pagingEnabled 
-                    showsHorizontalScrollIndicator={false}
-                    style={styles.imageScrollView}
-                  >
-                    {images.map((img, idx) => (
-                      <Image 
-                        key={idx} 
-                        source={{ uri: img }} 
-                        style={styles.medicineImage} 
-                      />
-                    ))}
-                  </ScrollView>
+                  <View style={styles.imageScrollView}>
+                    <Image
+                      source={{ uri: images[0] }}
+                      style={styles.medicineImage}
+                      resizeMode="cover"
+                    />
+                    {images.length > 1 && (
+                      <View style={styles.imageCountBadge}>
+                        <Text style={styles.imageCountBadgeText}>{`+${images.length - 1}`}</Text>
+                      </View>
+                    )}
+                  </View>
                 )}
                 <Card.Content>
                   <View style={styles.medicineHeader}>
@@ -1995,12 +1971,29 @@ const styles = StyleSheet.create({
     }),
   },
   imageScrollView: {
-    maxHeight: 200,
+    width: '100%',
+    height: 200,
+    position: 'relative',
+    overflow: 'hidden',
   },
   medicineImage: {
     width: '100%',
     height: 200,
     resizeMode: 'cover',
+  },
+  imageCountBadge: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  imageCountBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   medicineHeader: {
     flexDirection: 'row',

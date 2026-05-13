@@ -941,6 +941,11 @@ export default function MedicineScreen() {
           }
         : {};
 
+      // 持久化图片：Web 端转 dataURL；Native 端拷贝到 documentDirectory，
+      // 避免保存后因临时文件/Blob 失效导致列表中缩略图空白。
+      const persistedImages = await MedicineService.persistImages(selectedImages);
+      const coverImage = persistedImages[0] || selectedImages[0];
+
       if (editingMedicine) {
         // 更新现有药品
         const updatedMedicine = {
@@ -948,8 +953,8 @@ export default function MedicineScreen() {
           dosage,
           frequency,
           ...leafletFields,
-          images: selectedImages,
-          image: selectedImages[0],
+          images: persistedImages,
+          image: coverImage,
         };
         await MedicineService.updateMedicine(editingMedicine.id, updatedMedicine);
         Alert.alert('成功', '药品信息已更新，提醒已重新设置');
@@ -965,8 +970,8 @@ export default function MedicineScreen() {
           dosage,
           frequency,
           ...leafletFields,
-          images: selectedImages,
-          image: selectedImages[0],
+          images: persistedImages,
+          image: coverImage,
           createdAt: new Date().toISOString(),
           reminderConfig: {
             enabled: true,

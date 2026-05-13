@@ -34,6 +34,17 @@ export class OCRService {
       // ignore
     }
   }
+
+  /**
+   * 判断 AI 生成的药品说明是否有效（非兜底提示）
+   * - 统计 7 个主要字段中非空的数量，至少 2 个才保存/读取缓存
+   */
+  static isValidMedicineGuide(guide) {
+    if (!guide || typeof guide !== 'object') return false;
+    const keys = ['indication', 'usage', 'contraindication', 'precautions', 'sideEffects', 'interactions', 'storage'];
+    const filled = keys.reduce((n, k) => (guide[k] && String(guide[k]).trim() ? n + 1 : n), 0);
+    return filled >= 2;
+  }
   /**
    * 获取Access Token
    * 百度OCR需要先获取token才能调用API
@@ -420,7 +431,7 @@ export class OCRService {
       // 5. 说明书接口缺失时：用 AI 生成简明说明（摘要）
       if (ocrMedicineInfo.name) {
         const cached = await this.getCachedMedicineGuide(ocrMedicineInfo.name);
-        if (cached) {
+        if (cached && this.isValidMedicineGuide(cached)) {
           return {
             ...ocrMedicineInfo,
             ...cached,
@@ -442,7 +453,10 @@ export class OCRService {
             hasDetails: true,
             aiGenerated: true,
           };
-          await this.cacheMedicineGuide(ocrMedicineInfo.name, guide);
+          // 只缓存有效结果（避免将兔底文案缓存 7 天导致持续展示乱码/失败提示）
+          if (this.isValidMedicineGuide(guide)) {
+            await this.cacheMedicineGuide(ocrMedicineInfo.name, guide);
+          }
           return merged;
         } catch (e) {
           console.warn('AI药品说明生成失败，仅使用OCR结果:', e?.message || e);

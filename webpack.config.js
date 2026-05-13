@@ -11,6 +11,7 @@ module.exports = async function (env, argv) {
     argv
   );
 
+
   // 添加 webpack alias，将原生图标库重定向到 Expo 图标库
   config.resolve.alias = {
     ...config.resolve.alias,

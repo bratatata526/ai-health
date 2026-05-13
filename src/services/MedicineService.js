@@ -1,4 +1,5 @@
 import * as Notifications from 'expo-notifications';
+import * as FileSystem from 'expo-file-system';
 import { OCRService } from './OCRService';
 import { SecureStorage } from '../utils/secureStorage';
 import { Platform } from 'react-native';
@@ -268,7 +269,10 @@ export class MedicineService {
     try {
       const medicines = await this.getAllMedicines();
       medicines.push(medicine);
-      await SecureStorage.setItem(MEDICINES_KEY, medicines);
+      const ok = await SecureStorage.setItem(MEDICINES_KEY, medicines);
+      if (ok === false) {
+        throw new Error('存储药品失败，可能是浏览器本地存储容量不足（请清理浏览器数据或减少图片数量/体积）');
+      }
       return medicine;
     } catch (error) {
       console.error('保存药品失败:', error);
@@ -295,7 +299,10 @@ export class MedicineService {
       };
 
       medicines[index] = updated;
-      await SecureStorage.setItem(MEDICINES_KEY, medicines);
+      const ok = await SecureStorage.setItem(MEDICINES_KEY, medicines);
+      if (ok === false) {
+        throw new Error('存储药品失败，可能是浏览器本地存储容量不足（请清理浏览器数据或减少图片数量/体积）');
+      }
 
       // 取消旧提醒并设置新提醒
       await this.cancelReminders(id);
@@ -336,6 +343,183 @@ export class MedicineService {
       } else {
         throw new Error(`识别失败: ${errorMessage}。请检查网络连接或重试`);
       }
+    }
+  }
+
+  /**
+   * 将拍照/相册选出的图片 URI 持久化，避免保存后因临时文件/Blob 失效而导致列表空白。
+   * - Web：将 blob:/http(s): URL 转为 data:image/...;base64,... dataURL
+   * - Native：将临时 file:// 路径 copy 到 documentDirectory/medicines/ 下
+   * - 已经是持久路径 / dataURL / 远程 http(s) 不再重复处理
+   */
+  static async persistImages(uris = []) {
+    const list = Array.isArray(uris) ? uris.filter((u) => typeof u === 'string' && u.trim()) : [];
+    if (list.length === 0) return [];
+    const out = [];
+    for (let i = 0; i < list.length; i++) {
+      const uri = list[i];
+      try {
+        const persisted = await this.persistSingleImage(uri, i);
+        if (!persisted) continue;
+        // Web：如果返回仍是 blob: 说明原 URI 已失效（压缩与 dataURL 转换均失败），剔除
+        if (Platform.OS === 'web' && persisted.startsWith('blob:')) {
+          console.warn('检测到失效的 blob 图片 URI，自动剔除:', persisted);
+          continue;
+        }
+        out.push(persisted);
+      } catch (e) {
+        console.warn('持久化药品图片失败，剔除失效项:', e?.message || e);
+      }
+    }
+    return out;
+  }
+
+  static async persistSingleImage(uri, index = 0) {
+    if (!uri || typeof uri !== 'string') return '';
+    // 已是 dataURL
+    if (uri.startsWith('data:')) {
+      if (Platform.OS === 'web') {
+        // 对过大的 dataURL 运行压缩，避免 localStorage 超限
+        const shrunk = await this._compressDataUrlIfNeededWeb(uri);
+        return shrunk || uri;
+      }
+      return uri;
+    }
+
+    if (Platform.OS === 'web') {
+      if (/^(blob:|https?:)/i.test(uri)) {
+        // Web：用 Canvas 压缩并转成 dataURL，避免存储爆量
+        const compressed = await this._compressImageUriWeb(uri, 1024, 0.72);
+        if (compressed) return compressed;
+        // 压缩失败 → 退回原始 dataURL 转换
+        const dataUrl = await this._blobUriToDataUrl(uri);
+        return dataUrl || uri;
+      }
+      return uri;
+    }
+
+    // Native：若已在 documentDirectory 下则无需复制
+    const docDir = FileSystem.documentDirectory;
+    if (!docDir) return uri;
+    if (uri.startsWith(docDir)) return uri;
+    if (/^https?:/i.test(uri)) return uri; // 远程 URL 保留
+
+    // 确保目录存在
+    const dir = `${docDir}medicines/`;
+    try {
+      const info = await FileSystem.getInfoAsync(dir);
+      if (!info.exists) {
+        await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+      }
+    } catch {
+      // ignore
+    }
+
+    // 推断后缀
+    const extMatch = String(uri).match(/\.(jpg|jpeg|png|webp|heic|heif)(?:\?|$)/i);
+    const ext = (extMatch ? extMatch[1] : 'jpg').toLowerCase();
+    const target = `${dir}med_${Date.now()}_${index}.${ext}`;
+    try {
+      await FileSystem.copyAsync({ from: uri, to: target });
+      // 验证目标文件存在且可读
+      const chk = await FileSystem.getInfoAsync(target);
+      if (chk?.exists && (chk.size || 0) > 0) return target;
+      throw new Error('拷贝后目标文件无效');
+    } catch (e) {
+      // 一些平台/URI 不支持直接 copy，回退到读 base64 后写入
+      try {
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await FileSystem.writeAsStringAsync(target, base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const chk2 = await FileSystem.getInfoAsync(target);
+        if (chk2?.exists && (chk2.size || 0) > 0) return target;
+        // 再不行就内嵌为 dataURL，至少保证能显示
+        return `data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${base64}`;
+      } catch (e2) {
+        console.warn('写入药品图片文件失败:', e2?.message || e2);
+        return uri;
+      }
+    }
+  }
+
+  static async _blobUriToDataUrl(uri) {
+    try {
+      const resp = await fetch(uri);
+      const blob = await resp.blob();
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+    } catch (e) {
+      console.warn('Blob URL 转 dataURL 失败:', e?.message || e);
+      return '';
+    }
+  }
+
+  /**
+   * Web 端：将 blob:/http(s):/data: URI 通过 <img> + Canvas 缩放压缩为 JPEG dataURL。
+   * 限制长边 <= maxSize，压缩后体积大幅下降，避免 localStorage 爆量。
+   */
+  static _compressImageUriWeb(uri, maxSize = 1024, quality = 0.72) {
+    if (Platform.OS !== 'web') return Promise.resolve('');
+    return new Promise((resolve) => {
+      try {
+        if (typeof document === 'undefined' || typeof Image === 'undefined') {
+          resolve('');
+          return;
+        }
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          try {
+            const w = img.naturalWidth || img.width;
+            const h = img.naturalHeight || img.height;
+            if (!w || !h) { resolve(''); return; }
+            let tw = w;
+            let th = h;
+            const longest = Math.max(w, h);
+            if (longest > maxSize) {
+              const ratio = maxSize / longest;
+              tw = Math.round(w * ratio);
+              th = Math.round(h * ratio);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = tw;
+            canvas.height = th;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, tw, th);
+            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+            resolve(dataUrl || '');
+          } catch (e) {
+            console.warn('Canvas 压缩图片失败:', e?.message || e);
+            resolve('');
+          }
+        };
+        img.onerror = () => resolve('');
+        img.src = uri;
+      } catch (e) {
+        console.warn('创建图像压缩器失败:', e?.message || e);
+        resolve('');
+      }
+    });
+  }
+
+  /**
+   * 若 dataURL 超过 大约 400KB 就再压缩一次（Web）
+   */
+  static async _compressDataUrlIfNeededWeb(dataUrl) {
+    try {
+      const approxBytes = Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4);
+      if (approxBytes <= 400 * 1024) return dataUrl;
+      const compressed = await this._compressImageUriWeb(dataUrl, 1024, 0.7);
+      return compressed || dataUrl;
+    } catch {
+      return dataUrl;
     }
   }
 
