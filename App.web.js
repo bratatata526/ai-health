@@ -1,0 +1,349 @@
+import 'react-native-get-random-values';
+import React, { useEffect, useState } from 'react';
+import { Image, View, StyleSheet, TouchableOpacity } from 'react-native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { StatusBar } from 'expo-status-bar';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { optionalAppFonts } from './src/optionalFonts';
+import { Provider as PaperProvider, Text } from 'react-native-paper';
+import { useFonts } from 'expo-font';
+
+import HomeScreen from './src/screens/HomeScreen';
+import MedicineScreen from './src/screens/MedicineScreen';
+import DeviceScreen from './src/screens/DeviceScreen';
+import ReportScreen from './src/screens/ReportScreen';
+import AuthScreen from './src/screens/AuthScreen';
+import AIScreen from './src/screens/AIScreen';
+import TongueScreen from './src/screens/TongueScreen';
+import AIIcon from './src/components/AIIcon';
+import FloatingAIAssistant from './src/components/FloatingAIAssistant';
+import { theme, appFontFamilies } from './src/theme';
+import { MedicineService } from './src/services/MedicineService';
+import { AuthService } from './src/services/AuthService';
+import { AutoCloudSyncService } from './src/services/AutoCloudSyncService';
+
+const Tab = createBottomTabNavigator();
+const navigationRef = createNavigationContainerRef();
+const WEB_SIDEBAR_WIDTH = 180;
+const WEB_NAV_ITEMS = [
+  { name: '首页', icon: 'home-outline', iconActive: 'home' },
+  { name: '药品', icon: 'medical-outline', iconActive: 'medical' },
+  { name: '设备', icon: 'watch-outline', iconActive: 'watch' },
+  { name: '舌诊', icon: 'scan-outline', iconActive: 'scan' },
+  { name: 'AI助手', icon: null, iconActive: null },
+  { name: '报告', icon: 'document-text-outline', iconActive: 'document-text' },
+];
+
+
+// Web 端兜底：有些情况下模板 title 可能是字符串 "undefined"
+// 这里在模块加载阶段先纠正一次，后续再由 useEffect 根据登录状态覆盖。
+if (typeof document !== 'undefined') {
+  const t = String(document.title || '').trim();
+  if (t === '' || t === 'undefined') {
+    document.title = 'AI健康管家';
+  }
+}
+
+// Logo组件 - 作为标题显示（可点击回到首页）
+const LogoTitle = () => {
+  const handleLogoPress = () => {
+    if (navigationRef.isReady()) {
+      const currentRoute = navigationRef.getCurrentRoute();
+      
+      // 如果当前不在首页，则跳转到首页
+      if (currentRoute?.name !== '首页') {
+        navigationRef.navigate('首页');
+      }
+      // 如果已经在首页，点击 logo 不做任何操作（或者可以触发刷新）
+    }
+  };
+
+  return (
+    <TouchableOpacity 
+      style={styles.logoTitleContainer} 
+      onPress={handleLogoPress}
+      activeOpacity={0.7}
+    >
+      <Image
+        source={require('./assets/logo_2.png')}
+        style={styles.logo}
+        resizeMode="contain"
+      />
+    </TouchableOpacity>
+  );
+};
+
+export default function App() {
+  // Web/原生：确保图标字体加载完成，否则 Ionicons/MaterialCommunityIcons 可能显示为空白
+  const [fontsLoaded, fontError] = useFonts({
+    ...Ionicons.font,
+    ...MaterialCommunityIcons.font,
+    ...optionalAppFonts,
+  });
+  const fontsReady = fontsLoaded || fontError != null;
+
+  useEffect(() => {
+    if (__DEV__ && fontError) {
+      // eslint-disable-next-line no-console
+      console.warn('[fonts] Load failed (will render with fallbacks):', fontError?.message ?? fontError);
+    }
+  }, [fontError]);
+
+  /** Web：根结点继承正文栈（不依赖 expo-font 注册 Noto 文件名）。 */
+  useEffect(() => {
+    if (!fontsReady || typeof document === 'undefined') return;
+    const rootFont = appFontFamilies.regular;
+    try {
+      document.documentElement.style.fontFamily = rootFont;
+      document.body.style.fontFamily = rootFont;
+    } catch {
+      // ignore
+    }
+  }, [fontsReady]);
+
+  const [authed, setAuthed] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [activeTab, setActiveTab] = useState('首页');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const ok = await AuthService.isLoggedIn();
+        setAuthed(ok);
+      } finally {
+        setCheckingAuth(false);
+      }
+    })();
+  }, []);
+
+  // 自动云同步（自动上传）：全局启动，内部会在未登录时自动跳过
+  useEffect(() => {
+    AutoCloudSyncService.start();
+    return () => AutoCloudSyncService.stop();
+  }, []);
+
+  // Expo Web：修复浏览器标签标题显示为 undefined 的问题
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (checkingAuth) {
+      document.title = '加载中...';
+      return;
+    }
+    document.title = authed ? 'AI健康管家' : '登录/注册';
+  }, [authed, checkingAuth]);
+
+  return (
+    <PaperProvider theme={theme}>
+      <NavigationContainer
+        ref={navigationRef}
+        onReady={() => {
+          if (typeof document !== 'undefined') {
+            document.title = authed ? 'AI健康管家' : '登录/注册';
+          }
+        }}
+      >
+        <StatusBar style="light" />
+        {!fontsReady ? (
+          <View style={styles.loadingContainer}>
+            <Ionicons name="cloud-outline" size={32} color="#fff" />
+          </View>
+        ) : checkingAuth ? (
+          <View style={styles.loadingContainer}>
+            <Ionicons name="cloud-outline" size={32} color="#fff" />
+          </View>
+        ) : !authed ? (
+          <AuthScreen onAuthed={async () => setAuthed(await AuthService.isLoggedIn())} />
+        ) : (
+          <View style={styles.webAppContainer}>
+          <View style={styles.webSidebar}>
+            <View style={styles.webSidebarHeader}>
+              <Image
+                source={require('./assets/logo_1.png')}
+                style={styles.webSidebarLogo}
+                resizeMode="contain"
+              />
+              <Text style={styles.webSidebarTitle}>AI健康管家</Text>
+            </View>
+            <View style={styles.webSidebarMenu}>
+              {WEB_NAV_ITEMS.map((item) => {
+                const focused = activeTab === item.name;
+                return (
+                  <TouchableOpacity
+                    key={item.name}
+                    style={[styles.webSidebarItem, focused && styles.webSidebarItemActive]}
+                    activeOpacity={0.8}
+                    onPress={() => {
+                      setActiveTab(item.name);
+                      if (navigationRef.isReady()) {
+                        navigationRef.navigate(item.name);
+                      }
+                    }}
+                  >
+                    {item.name === 'AI助手' ? (
+                      <AIIcon
+                        size={18}
+                        color={focused ? theme.colors.primary : theme.colors.textSecondary}
+                        focused={focused}
+                      />
+                    ) : (
+                      <Ionicons
+                        name={focused ? item.iconActive : item.icon}
+                        size={18}
+                        color={focused ? theme.colors.primary : theme.colors.textSecondary}
+                      />
+                    )}
+                    <Text style={[styles.webSidebarItemText, focused && styles.webSidebarItemTextActive]}>
+                      {item.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+          <View style={styles.webMainContent}>
+          <Tab.Navigator
+            screenListeners={({ route }) => ({
+              focus: () => setActiveTab(route.name),
+            })}
+            screenOptions={({ route }) => ({
+              tabBarStyle: {
+                display: 'none',
+              },
+              headerStyle: {
+                backgroundColor: theme.colors.primary,
+              },
+              headerTintColor: '#fff',
+              headerTitleStyle: {
+                fontFamily: appFontFamilies.bold,
+                fontWeight: 'bold',
+              },
+              headerTitle: () => <LogoTitle />,
+            })}
+          >
+            <Tab.Screen name="首页">
+              {(props) => <HomeScreen {...props} onLogout={() => setAuthed(false)} />}
+            </Tab.Screen>
+            <Tab.Screen name="药品" component={MedicineScreen} />
+            <Tab.Screen name="设备" component={DeviceScreen} />
+            <Tab.Screen name="舌诊" component={TongueScreen} />
+            <Tab.Screen name="AI助手" component={AIScreen} />
+            <Tab.Screen name="报告" component={ReportScreen} />
+          </Tab.Navigator>
+          </View>
+          <FloatingAIAssistant
+            onNavigate={(target) => {
+              if (navigationRef.isReady()) {
+                navigationRef.navigate(target);
+              }
+            }}
+            getPendingMedicines={async () => {
+              try {
+                const allMeds = await MedicineService.getAllMedicines();
+                const pending = [];
+                for (const med of allMeds) {
+                  const todayReminders = await MedicineService.getTodayReminders(med.id);
+                  const notTaken = todayReminders.filter(
+                    (r) => r.status === 'scheduled' || r.status === 'snoozed'
+                  );
+                  for (const r of notTaken) {
+                    const d = new Date(r.scheduledAt);
+                    const hh = String(d.getHours()).padStart(2, '0');
+                    const mm = String(d.getMinutes()).padStart(2, '0');
+                    pending.push({ name: med.name, time: `${hh}:${mm}` });
+                  }
+                }
+                return pending;
+              } catch (e) {
+                console.warn('获取待服药品失败:', e);
+                return [];
+              }
+            }}
+          />
+          </View>
+        )}
+      </NavigationContainer>
+    </PaperProvider>
+  );
+}
+
+const styles = StyleSheet.create({
+  logoTitleContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+  },
+  logo: {
+    width: 120,
+    height: 40,
+  },
+  webAppContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    width: '100%',
+    height: '100%',
+    backgroundColor: theme.colors.background,
+  },
+  webSidebar: {
+    width: WEB_SIDEBAR_WIDTH,
+    backgroundColor: theme.colors.surface,
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.outlineVariant,
+    paddingHorizontal: 10,
+    paddingTop: 14,
+    paddingBottom: 12,
+  },
+  webSidebarHeader: {
+    alignItems: 'center',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.outlineVariant,
+    marginBottom: 10,
+  },
+  webSidebarLogo: {
+    width: 30,
+    height: 30,
+    marginBottom: 6,
+  },
+  webSidebarTitle: {
+    fontFamily: appFontFamilies.medium,
+    fontSize: 13,
+    color: theme.colors.text,
+  },
+  webSidebarMenu: {
+    gap: 4,
+  },
+  webSidebarItem: {
+    minHeight: 42,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  webSidebarItemActive: {
+    backgroundColor: theme.colors.surfaceVariant,
+  },
+  webSidebarItemText: {
+    fontFamily: appFontFamilies.regular,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+  },
+  webSidebarItemTextActive: {
+    fontFamily: appFontFamilies.medium,
+    color: theme.colors.primary,
+  },
+  webMainContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#4A90E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
+

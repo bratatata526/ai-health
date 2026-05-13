@@ -300,7 +300,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console
-  console.log(`Cloud API listening on http://192.168.3.5:${PORT}`);
+  console.log(`Cloud API listening on http://10.206.140.107:${PORT}`);
   console.log(`DB: ${DB_PATH}`);
   console.log(`Compat data dir: ${DATA_DIR}`);
 });
