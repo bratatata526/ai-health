@@ -89,8 +89,8 @@ export const theme = {
   },
   shadow: {
     // iOS shadow + Android elevation（按需在各 Screen 使用）
-    color: 'rgba(15, 23, 42, 0.12)',
-    colorStrong: 'rgba(15, 23, 42, 0.18)',
+    color: 'rgba(15, 23, 42, 0.08)',
+    colorStrong: 'rgba(15, 23, 42, 0.12)',
   },
 };
 
