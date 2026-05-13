@@ -328,6 +328,21 @@ export default function ReportScreen() {
             <Title style={styles.sectionTitle}>数据概览</Title>
             <View style={styles.overviewGrid}>
               <View style={styles.overviewItem}>
+                <Ionicons name="body-outline" size={32} color={theme.colors.primary} />
+                <Text style={styles.overviewValue}>{displayMetricValue(report.heightCm)}</Text>
+                <Text style={styles.overviewLabel}>身高 (cm)</Text>
+              </View>
+              <View style={styles.overviewItem}>
+                <Ionicons name="barbell-outline" size={32} color={theme.colors.primary} />
+                <Text style={styles.overviewValue}>{displayMetricValue(report.weightKg)}</Text>
+                <Text style={styles.overviewLabel}>体重 (kg)</Text>
+              </View>
+              <View style={styles.overviewItem}>
+                <Ionicons name="speedometer-outline" size={32} color={theme.colors.primary} />
+                <Text style={styles.overviewValue}>{displayMetricValue(report.bmi)}</Text>
+                <Text style={styles.overviewLabel}>BMI</Text>
+              </View>
+              <View style={styles.overviewItem}>
                 <Ionicons name="heart" size={32} color={theme.colors.error} />
                 <Text style={styles.overviewValue}>{report.avgHeartRate}</Text>
                 <Text style={styles.overviewLabel}>平均心率 (bpm)</Text>
@@ -529,6 +544,8 @@ const getScoreDescription = (score) => {
   return '您的健康状况需要关注，建议咨询医生。';
 };
 
+const displayMetricValue = (value) => (value != null ? String(value) : '未填写');
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -619,10 +636,13 @@ const styles = StyleSheet.create({
   },
   overviewGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-around',
     marginTop: theme.spacing.md,
+    gap: theme.spacing.sm,
   },
   overviewItem: {
+    minWidth: 110,
     alignItems: 'center',
   },
   overviewValue: {

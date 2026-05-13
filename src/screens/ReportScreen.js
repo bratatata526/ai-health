@@ -328,6 +328,21 @@ export default function ReportScreen() {
             <Title style={styles.sectionTitle}>数据概览</Title>
             <View style={styles.overviewGrid}>
               <View style={styles.overviewItem}>
+                <Ionicons name="body-outline" size={32} color={theme.colors.primary} />
+                <Text style={styles.overviewValue}>{displayMetricValue(report.heightCm)}</Text>
+                <Text style={styles.overviewLabel}>身高 (cm)</Text>
+              </View>
+              <View style={styles.overviewItem}>
+                <Ionicons name="barbell-outline" size={32} color={theme.colors.primary} />
+                <Text style={styles.overviewValue}>{displayMetricValue(report.weightKg)}</Text>
+                <Text style={styles.overviewLabel}>体重 (kg)</Text>
+              </View>
+              <View style={styles.overviewItem}>
+                <Ionicons name="speedometer-outline" size={32} color={theme.colors.primary} />
+                <Text style={styles.overviewValue}>{displayMetricValue(report.bmi)}</Text>
+                <Text style={styles.overviewLabel}>BMI</Text>
+              </View>
+              <View style={styles.overviewItem}>
                 <Ionicons name="heart" size={32} color={theme.colors.error} />
                 <Text style={styles.overviewValue}>{report.avgHeartRate}</Text>
                 <Text style={styles.overviewLabel}>平均心率 (bpm)</Text>
@@ -354,7 +369,7 @@ export default function ReportScreen() {
                 <Title style={styles.sectionTitle}>心率趋势</Title>
                 <LineChart
                   data={report.trends.heartRate}
-                  width={width - 64}
+                  width={Math.min(width - 64, 1036)}
                   height={220}
                   chartConfig={{
                     ...chartConfig,
@@ -375,7 +390,7 @@ export default function ReportScreen() {
                 <Title style={styles.sectionTitle}>血糖趋势</Title>
                 <LineChart
                   data={report.trends.bloodGlucose}
-                  width={width - 64}
+                  width={Math.min(width - 64, 1036)}
                   height={220}
                   chartConfig={{
                     ...chartConfig,
@@ -395,7 +410,7 @@ export default function ReportScreen() {
                 <Title style={styles.sectionTitle}>睡眠趋势</Title>
                 <StackedBarChart
                   data={sleepStageChartData}
-                  width={width - 72}
+                  width={Math.min(width - 72, 1028)}
                   height={220}
                   fromZero
                   segments={4}
@@ -529,6 +544,8 @@ const getScoreDescription = (score) => {
   return '您的健康状况需要关注，建议咨询医生。';
 };
 
+const displayMetricValue = (value) => (value != null ? String(value) : '未填写');
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -536,6 +553,9 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: theme.spacing.md,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -619,10 +639,13 @@ const styles = StyleSheet.create({
   },
   overviewGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-around',
     marginTop: theme.spacing.md,
+    gap: theme.spacing.sm,
   },
   overviewItem: {
+    minWidth: 110,
     alignItems: 'center',
   },
   overviewValue: {

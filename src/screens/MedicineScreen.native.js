@@ -927,6 +927,18 @@ export default function MedicineScreen() {
       const frequency = canUseRecognition
         ? (recognitionResult.frequency || '每日2次')
         : (manualFrequency || '每日2次');
+      const leafletFields = canUseRecognition
+        ? {
+            indication: recognitionResult.indication || '',
+            contraindication: recognitionResult.contraindication || '',
+            usage: recognitionResult.usage || '',
+            sideEffects: recognitionResult.sideEffects || '',
+            precautions: recognitionResult.precautions || '',
+            interactions: recognitionResult.interactions || '',
+            storage: recognitionResult.storage || '',
+            description: recognitionResult.description || '',
+          }
+        : {};
 
       // 持久化图片：Web 端转 dataURL；Native 端拷贝到 documentDirectory，
       // 避免保存后因临时文件/Blob 失效导致列表中缩略图空白。
@@ -939,6 +951,7 @@ export default function MedicineScreen() {
           name: medicineName,
           dosage,
           frequency,
+          ...leafletFields,
           images: persistedImages,
           image: coverImage,
         };
@@ -955,6 +968,7 @@ export default function MedicineScreen() {
           name: medicineName,
           dosage,
           frequency,
+          ...leafletFields,
           images: persistedImages,
           image: coverImage,
           createdAt: new Date().toISOString(),

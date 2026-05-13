@@ -96,7 +96,15 @@ export default function AIScreen() {
     setChatMessages(nextMessages);
     setChatLoading(true);
     try {
-      const answer = await AIService.healthQnA(question, { medicines });
+      const [healthData, devices] = await Promise.all([
+        DeviceService.getHealthDataForStorage(),
+        DeviceService.getConnectedDevices(),
+      ]);
+      const answer = await AIService.healthQnA(question, {
+        medicines,
+        healthData,
+        devices,
+      });
       setChatMessages((prev) => [...prev, { role: 'assistant', content: answer }]);
       setTimeout(() => {
         try {
@@ -148,7 +156,7 @@ export default function AIScreen() {
     setAdviceLoading(true);
     setAdviceText('');
     try {
-      const healthData = await DeviceService.getHealthData();
+      const healthData = await DeviceService.getHealthDataForStorage();
       const ms = medicines;
       const userData = {
         heartRate: healthData?.heartRate || [],
@@ -366,6 +374,9 @@ const styles = StyleSheet.create({
   containerContent: {
     padding: theme.spacing.md,
     gap: theme.spacing.md,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
   },
   card: {
     borderRadius: theme.borderRadius.lg,

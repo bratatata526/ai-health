@@ -40,6 +40,16 @@ export class AuthService {
     return await SecureStorage.getItem(USER_PROFILE_KEY);
   }
 
+  static async mergeProfile(partialProfile = {}) {
+    const currentProfile = (await this.getProfile()) || {};
+    const nextProfile = {
+      ...currentProfile,
+      ...(partialProfile && typeof partialProfile === 'object' ? partialProfile : {}),
+    };
+    await SecureStorage.setItem(USER_PROFILE_KEY, nextProfile);
+    return nextProfile;
+  }
+
   static async isLoggedIn() {
     const token = await this.getToken();
     return Boolean(token);

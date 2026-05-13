@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, Dimensions, Alert, Platform } from 'react-native';
-import { Card, Title, Paragraph, Button, Text, Dialog, Portal, TextInput } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, Alert, Platform, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { Button, Text, Dialog, Portal, TextInput, Avatar } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { theme, textStyles } from '../theme';
 import { CloudSyncService } from '../services/CloudSyncService';
 import { AuthService } from '../services/AuthService';
-
-const { width } = Dimensions.get('window');
+import { AccountCloudModal } from '../components/AccountCloudModal';
 
 // 格式化日期时间为友好格式
 const formatSyncTime = (isoString) => {
@@ -109,129 +108,90 @@ export default function HomeScreen({ navigation, onLogout }) {
     );
   };
 
+  // 响应式列数
+  const { width: screenWidth } = useWindowDimensions();
+  const cols = screenWidth >= 1024 ? 4 : screenWidth >= 720 ? 3 : 2;
+
+  // 功能入口数据
+  const features = [
+    { key: 'med', icon: 'medical', color: theme.colors.primary, title: '药品管理', desc: '拍盒识别 · 定时提醒', nav: '药品' },
+    { key: 'dev', icon: 'watch', color: theme.colors.secondary, title: '设备数据', desc: '手环血糖 · 实时监测', nav: '设备' },
+    { key: 'rpt', icon: 'document-text', color: theme.colors.accent, title: '健康报告', desc: '周月报告 · 趋势洞察', nav: '报告' },
+    { key: 'tong', icon: 'leaf', color: '#16A34A', title: 'AI 舌诊', desc: '舌象识别 · 体质参考', nav: '舌诊' },
+  ];
+
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+      {/* 紧凑头部 */}
       <LinearGradient
         colors={['#2563EB', '#7C3AED']}
         style={styles.header}
       >
-        <View style={styles.headerContent}>
-          <Ionicons name="heart" size={48} color="#fff" />
-          <Title style={styles.headerTitle}>AI健康管家</Title>
-          <Paragraph style={styles.headerSubtitle}>您的专属健康助手</Paragraph>
+        <View style={styles.headerInner}>
+          <View style={styles.headerLeft}>
+            <Ionicons name="heart" size={24} color="#fff" />
+            <View style={styles.headerTextWrap}>
+              <Text style={styles.headerTitle}>AI 健康管家</Text>
+              <Text style={styles.headerSubtitle}>您的专属健康助手</Text>
+            </View>
+          </View>
+          <TouchableOpacity onPress={openAccountDialog} style={styles.avatarBtn}>
+            <Ionicons name="person-circle" size={36} color="#fff" />
+          </TouchableOpacity>
         </View>
       </LinearGradient>
 
+      {/* 内容区：最大宽度居中 */}
       <View style={styles.content}>
-        <Card style={styles.card} onPress={openAccountDialog}>
-          <Card.Content>
-            <View style={styles.cardHeader}>
-              <Ionicons name="person-circle" size={32} color={theme.colors.primary} />
-              <Title style={styles.cardTitle}>账号与云同步</Title>
+        {/* 快捷入口 */}
+        <Text style={styles.sectionTitle}>快捷入口</Text>
+        <View style={styles.gridRow}>
+          {features.map((f) => (
+            <View key={f.key} style={[styles.gridCell, { width: `${100 / cols}%` }]}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => navigation.navigate(f.nav)}
+                style={styles.featureCard}
+              >
+                <View style={[styles.featureIconWrap, { backgroundColor: `${f.color}1A` }]}>
+                  <Ionicons name={f.icon} size={24} color={f.color} />
+                </View>
+                <Text style={styles.featureTitle}>{f.title}</Text>
+                <Text style={styles.featureDesc} numberOfLines={1}>{f.desc}</Text>
+              </TouchableOpacity>
             </View>
-            <Paragraph style={styles.cardDescription}>
-              查看账号信息、同步时间，支持修改密码/退出/注销
-            </Paragraph>
-          </Card.Content>
-        </Card>
-
-        <Card style={styles.card} onPress={() => navigation.navigate('药品')}>
-          <Card.Content>
-            <View style={styles.cardHeader}>
-              <Ionicons name="medical" size={32} color={theme.colors.primary} />
-              <Title style={styles.cardTitle}>药品管理</Title>
-            </View>
-            <Paragraph style={styles.cardDescription}>
-              拍摄药盒，智能识别药品信息，设置定时提醒
-            </Paragraph>
-          </Card.Content>
-        </Card>
-
-        <Card style={styles.card} onPress={() => navigation.navigate('设备')}>
-          <Card.Content>
-            <View style={styles.cardHeader}>
-              <Ionicons name="watch" size={32} color={theme.colors.secondary} />
-              <Title style={styles.cardTitle}>设备数据</Title>
-            </View>
-            <Paragraph style={styles.cardDescription}>
-              连接智能手环、血糖仪，实时监测健康数据
-            </Paragraph>
-          </Card.Content>
-        </Card>
-
-        <Card style={styles.card} onPress={() => navigation.navigate('报告')}>
-          <Card.Content>
-            <View style={styles.cardHeader}>
-              <Ionicons name="document-text" size={32} color={theme.colors.accent} />
-              <Title style={styles.cardTitle}>健康报告</Title>
-            </View>
-            <Paragraph style={styles.cardDescription}>
-              生成个性化周/月健康报告，全面了解身体状况
-            </Paragraph>
-          </Card.Content>
-        </Card>
-
-        <Card
-          style={styles.card}
-          onPress={() => navigation.navigate('舌诊')}
-        >
-          <Card.Content>
-            <View style={styles.cardHeader}>
-              <Ionicons name="leaf" size={32} color={theme.colors.primary} />
-              <Title style={styles.cardTitle}>AI舌诊</Title>
-            </View>
-            <Paragraph style={styles.cardDescription}>
-            拍摄舌象，AI分析舌象特征，获取体质调养参考
-            </Paragraph>
-          </Card.Content>
-        </Card>
-
-        <View style={styles.quickActions}>
-          <Button
-            mode="contained"
-            icon="camera"
-            onPress={() => navigation.navigate('药品')}
-            style={styles.actionButton}
-            contentStyle={styles.actionButtonContent}
-          >
-            拍摄药盒
-          </Button>
-          <Button
-            mode="outlined"
-            icon="chart-line"
-            onPress={() => navigation.navigate('报告')}
-            style={styles.actionButton}
-            contentStyle={styles.actionButtonContent}
-          >
-            查看报告
-          </Button>
-
+          ))}
         </View>
+
+        {/* AI 建议提示条 */}
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onPress={() => navigation.navigate('报告')}
+          style={styles.tipCard}
+        >
+          <Ionicons name="sparkles" size={20} color="#7C3AED" />
+          <View style={{ flex: 1, marginLeft: theme.spacing.sm }}>
+            <Text style={styles.tipTitle}>AI 智能建议</Text>
+            <Text style={styles.tipDesc} numberOfLines={1}>查看个性化健康洞察与趋势分析</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
       </View>
 
-      <Portal>
-        <Dialog visible={accountDialogVisible} onDismiss={() => setAccountDialogVisible(false)}>
-          <Dialog.Title>账号与云同步</Dialog.Title>
-          <Dialog.Content>
-            <Paragraph>
-              {accountInfo.profile
-                ? `当前用户：${accountInfo.profile.name}（${accountInfo.profile.email}）`
-                : '当前未获取到用户资料'}
-            </Paragraph>
-            <Paragraph style={{ marginTop: theme.spacing.sm }}>
-              {accountInfo.cloudMeta?.updatedAt
-                ? `上次同步时间：${formatSyncTime(accountInfo.cloudMeta.updatedAt)}`
-                : '上次同步时间：暂无（建议先上传或下载）'}
-            </Paragraph>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setPwdDialogVisible(true)}>修改密码</Button>
-            <Button onPress={deleteAccount} textColor={theme.colors.error}>注销账号</Button>
-            <Button onPress={logout}>退出登录</Button>
-            <Button onPress={() => setAccountDialogVisible(false)}>关闭</Button>
-          </Dialog.Actions>
-        </Dialog>
+      <AccountCloudModal
+        visible={accountDialogVisible}
+        onDismiss={() => setAccountDialogVisible(false)}
+        profile={accountInfo.profile}
+        cloudMeta={accountInfo.cloudMeta}
+        onProfileUpdated={(nextProfile) => {
+          setAccountInfo((prev) => ({ ...prev, profile: nextProfile }));
+        }}
+        onOpenPassword={() => setPwdDialogVisible(true)}
+        onDeleteAccount={deleteAccount}
+        onLogout={logout}
+      />
 
+      <Portal>
         <Dialog visible={pwdDialogVisible} onDismiss={() => setPwdDialogVisible(false)}>
           <Dialog.Title>修改密码</Dialog.Title>
           <Dialog.Content>
@@ -269,80 +229,143 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  scrollContent: {
+    paddingBottom: theme.spacing.xl,
+  },
+  // 头部
   header: {
-    paddingTop: 60,
-    paddingBottom: 40,
+    paddingTop: Platform.OS === 'web' ? theme.spacing.lg : 52,
+    paddingBottom: theme.spacing.lg,
     paddingHorizontal: theme.spacing.lg,
     borderBottomLeftRadius: theme.borderRadius.xl,
     borderBottomRightRadius: theme.borderRadius.xl,
   },
-  headerContent: {
+  headerInner: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  headerTextWrap: {
+    marginLeft: theme.spacing.sm,
   },
   headerTitle: {
     ...textStyles.title,
     color: '#fff',
-    fontSize: 28,
-    marginTop: theme.spacing.md,
+    fontSize: 20,
   },
   headerSubtitle: {
     ...textStyles.body,
     color: '#fff',
-    fontSize: 16,
+    fontSize: 13,
     opacity: 0.9,
-    marginTop: theme.spacing.xs,
+    marginTop: 2,
   },
+  avatarBtn: {
+    marginLeft: theme.spacing.md,
+    padding: 4,
+  },
+  // 内容
   content: {
-    padding: theme.spacing.md,
+    paddingHorizontal: theme.spacing.md,
+    paddingTop: theme.spacing.lg,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
   },
-  card: {
-    marginBottom: theme.spacing.md,
-    borderRadius: theme.borderRadius.lg,
+  sectionTitle: {
+    ...textStyles.semi,
+    fontSize: 15,
+    color: theme.colors.text,
+    marginBottom: theme.spacing.sm,
+    paddingLeft: theme.spacing.xs,
+  },
+  // 网格
+  gridRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -theme.spacing.xs,
+  },
+  gridCell: {
+    paddingHorizontal: theme.spacing.xs,
+    paddingVertical: theme.spacing.xs,
+  },
+  // 功能入口卡
+  featureCard: {
     backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.md,
     borderWidth: 1,
     borderColor: theme.colors.outlineVariant,
-    overflow: 'hidden',
+    minHeight: 110,
     ...Platform.select({
       ios: {
         shadowColor: theme.shadow.color,
         shadowOpacity: 1,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 8 },
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
       },
-      android: { elevation: 2 },
+      android: { elevation: 1 },
       web: {
         shadowColor: theme.shadow.color,
         shadowOpacity: 1,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 8 },
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
+        cursor: 'pointer',
       },
     }),
   },
-  cardHeader: {
-    flexDirection: 'row',
+  featureIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: theme.spacing.sm,
   },
-  cardTitle: {
+  featureTitle: {
     ...textStyles.title,
-    marginLeft: theme.spacing.sm,
-    fontSize: 20,
+    fontSize: 15,
+    color: theme.colors.text,
   },
-  cardDescription: {
+  featureDesc: {
     ...textStyles.body,
+    fontSize: 12,
     color: theme.colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
+    marginTop: 2,
   },
-  quickActions: {
+  // AI 建议条
+  tipCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F3FF',
+    borderRadius: theme.borderRadius.lg,
+    padding: theme.spacing.md,
     marginTop: theme.spacing.lg,
-    gap: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
+    ...Platform.select({
+      web: { cursor: 'pointer' },
+      default: {},
+    }),
   },
-  actionButton: {
-    borderRadius: theme.borderRadius.md,
+  tipTitle: {
+    ...textStyles.semi,
+    fontSize: 14,
+    color: '#5B21B6',
   },
-  actionButtonContent: {
-    paddingVertical: theme.spacing.sm,
+  tipDesc: {
+    ...textStyles.body,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
   },
   input: {
     marginBottom: theme.spacing.sm,

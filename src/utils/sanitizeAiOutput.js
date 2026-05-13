@@ -3,6 +3,17 @@
  */
 
 const TAB_NAV_LABELS = new Set(['首页', '药品', '设备', 'AI助手', '报告']);
+const ALLOWED_ASCII_WORDS = new Set([
+  'AI',
+  'APP',
+  'OCR',
+  'bpm',
+  'mmol',
+  'mmol/L',
+  'h',
+  'kg',
+  'ml',
+]);
 
 /**
  * @param {string} raw
@@ -32,10 +43,35 @@ export function sanitizeHealthAdviceText(raw) {
   s = s.replace(/[，,]\s*[。\.]/g, '。');
   // 中文句号连写
   s = s.replace(/[。\.]{3,}/g, '。');
+  // 中英文标点连续重复（保留省略号逻辑在后续）
+  s = s.replace(/([，。！？；：,.!?;:、])\1{1,}/g, '$1');
   // 去掉 markdown 粗体符号，防止残留 *
   s = s.replace(/\*\*(.*?)\*\*/g, '$1');
+  // 去掉 markdown 斜体符号（短文本包裹）
+  s = s.replace(/\*([^\*\n]{1,60})\*/g, '$1');
   // 去掉孤立 *（非乘法场景）
   s = s.replace(/(^|\s)\*(?=\S)/g, '$1');
+  // 去掉中文词后意外残留的单个 *
+  s = s.replace(/([\u4e00-\u9fa5A-Za-z0-9])\*/g, '$1');
+
+  // 去掉混入中文回答中的无关外文词（如 "verwenden"），保留常见医学单位词。
+  s = s.replace(/\b([A-Za-z][A-Za-z\/]{2,})\b/g, (full, word, offset, input) => {
+    if (ALLOWED_ASCII_WORDS.has(word)) return full;
+    const prev = input[offset - 1] || '';
+    const next = input[offset + full.length] || '';
+    const nearChinese = /[\u4e00-\u9fa5]/.test(prev) || /[\u4e00-\u9fa5]/.test(next);
+    if (nearChinese) return '';
+    return full;
+  });
+
+  // 重复短语：如“变化变化”“建议建议”
+  s = s.replace(/([\u4e00-\u9fa5]{2,6})(?:\1){1,}/g, '$1');
+
+  // 清理常见句尾残缺连接词
+  s = s.replace(/[，,]?\s*(同时|另外|并且|且)\s*$/g, '。');
+  // 清理串台角色行与误注入续写词
+  s = s.replace(/^\s*(user|assistant|system)\s*$/gim, '');
+  s = s.replace(/^\s*继续\s*$/gim, '');
 
   // 「解析」等小词灾难性复读；极端情况整块截断前文
   s = stripRunawayJiexiBlock(s);
