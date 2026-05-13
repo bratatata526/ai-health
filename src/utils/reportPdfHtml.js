@@ -277,6 +277,9 @@ export function buildHealthReportPdfHtml(opts) {
   const ss = report.sleepStages || {};
   const fmtSleepStageHour = (v) =>
     v != null ? `${escapeHtml(String(v))} 小时` : '暂无数据';
+  const fmtBodyMetric = (v, unit) =>
+    v != null ? `${escapeHtml(String(v))} ${escapeHtml(unit)}` : '未填写';
+  const fmtBmi = (v) => (v != null ? escapeHtml(String(v)) : '未填写');
 
   const aiDisclaimer = escapeHtml(AI_DISCLAIMER_ZH);
 
@@ -577,6 +580,9 @@ export function buildHealthReportPdfHtml(opts) {
   <section class="section">
     <h2>数据概览</h2>
     <table class="overview-table">
+      <tr><th>身高</th><td>${fmtBodyMetric(report.heightCm, 'cm')}</td></tr>
+      <tr><th>体重</th><td>${fmtBodyMetric(report.weightKg, 'kg')}</td></tr>
+      <tr><th>BMI</th><td>${fmtBmi(report.bmi)}</td></tr>
       <tr><th>平均心率</th><td>${escapeHtml(String(report.avgHeartRate))} bpm</td></tr>
       <tr><th>平均血糖</th><td>${escapeHtml(String(report.avgBloodGlucose))} mmol/L</td></tr>
       <tr><th>平均睡眠</th><td>${escapeHtml(String(report.avgSleep))} 小时</td></tr>

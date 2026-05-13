@@ -272,6 +272,7 @@ const server = http.createServer(async (req, res) => {
       const snapshot = body.snapshot || {};
       const force = url.searchParams.get('force') === '1';
       const stored = getUserData(userId);
+      const incomingProfile = snapshot?.profile;
 
       const baseRevision = Number(body.baseRevision || 0) || null;
       if (!force && baseRevision && baseRevision !== stored.revision) {
@@ -284,6 +285,9 @@ const server = http.createServer(async (req, res) => {
 
       const next = {
         ...stored,
+        profile: incomingProfile && typeof incomingProfile === 'object'
+          ? { ...(stored.profile || {}), ...incomingProfile }
+          : stored.profile,
         snapshot,
         updatedAt: new Date().toISOString(),
         revision: (stored.revision || 1) + 1,
