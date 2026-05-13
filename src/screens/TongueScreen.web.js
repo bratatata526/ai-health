@@ -14,6 +14,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { theme, appFontFamilies } from '../theme';
 import { TongueService } from '../services/TongueService';
 import { SecureStorage } from '../utils/secureStorage';
+import Markdown from 'react-native-markdown-display';
 
 const HISTORY_KEY = '@tongue_analysis_history';
 const POLL_INTERVAL_MS = 3000;
@@ -380,7 +381,7 @@ export default function TongueScreen() {
             {currentTask?.result?.analysis_markdown ? (
               <View style={styles.markdownBox}>
                 <Text style={styles.featuresTitle}>AI 分析报告</Text>
-                <Text style={styles.markdownText}>{currentTask.result.analysis_markdown}</Text>
+                <Markdown style={markdownStyles}>{currentTask.result.analysis_markdown}</Markdown>
               </View>
             ) : null}
           </Card.Content>
@@ -549,3 +550,78 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
 });
+
+const markdownStyles = {
+  body: {
+    fontFamily: appFontFamilies.regular,
+    color: theme.colors.text,
+    lineHeight: 22,
+  },
+  heading1: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
+    fontSize: 20,
+    marginTop: 16,
+    marginBottom: 8,
+    color: theme.colors.text,
+  },
+  heading2: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
+    fontSize: 18,
+    marginTop: 14,
+    marginBottom: 6,
+    color: theme.colors.text,
+  },
+  heading3: {
+    fontFamily: appFontFamilies.bold,
+    fontWeight: Platform.OS === 'web' ? '700' : 'normal',
+    fontSize: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    color: theme.colors.text,
+  },
+  paragraph: {
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  list_item: {
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  bullet_list: {
+    marginLeft: 16,
+  },
+  ordered_list: {
+    marginLeft: 16,
+  },
+  strong: {
+    fontWeight: 'bold',
+  },
+  em: {
+    fontStyle: 'italic',
+  },
+  code_inline: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: theme.colors.surfaceVariant,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+    fontSize: 14,
+  },
+  code_block: {
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    backgroundColor: theme.colors.surfaceVariant,
+    padding: 12,
+    borderRadius: 8,
+    marginVertical: 8,
+    fontSize: 14,
+  },
+  blockquote: {
+    borderLeftWidth: 4,
+    borderLeftColor: theme.colors.outlineVariant,
+    paddingLeft: 12,
+    marginLeft: 8,
+    marginVertical: 8,
+  },
+};
