@@ -175,10 +175,15 @@ export class ExportService {
   static async exportReportToText(reportType = 'week', useAI = false) {
     try {
       const report = await ReportService.generateReport(reportType, useAI);
+      const formatMetric = (value, unit) => (value != null ? `${value} ${unit}` : '未填写');
+      const formatBmi = (value) => (value != null ? `${value}` : '未填写');
       
       let text = `健康报告 - ${report.period}\n`;
       text += `生成时间: ${new Date(report.generatedAt).toLocaleString('zh-CN')}\n\n`;
       text += `=== 数据概览 ===\n`;
+      text += `身高: ${formatMetric(report.heightCm, 'cm')}\n`;
+      text += `体重: ${formatMetric(report.weightKg, 'kg')}\n`;
+      text += `BMI: ${formatBmi(report.bmi)}\n`;
       text += `平均心率: ${report.avgHeartRate} bpm\n`;
       text += `平均血糖: ${report.avgBloodGlucose} mmol/L\n`;
       text += `平均睡眠: ${report.avgSleep} 小时\n`;
