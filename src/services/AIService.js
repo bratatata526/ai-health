@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { buildHealthAdviceSummary } from '../utils/healthSummaryForAI';
 import { sanitizeHealthAdviceText } from '../utils/sanitizeAiOutput';
 import { SecureStorage } from '../utils/secureStorage';
+import { MedicineDBService } from './MedicineDBService';
 
 /** 从 OpenAI 兼容的 chat/completions JSON 中提取助手正文（兼容部分厂商字段差异） */
 function extractOpenAIChatContent(data) {
@@ -58,6 +59,85 @@ function extractUpstreamErrorMessage(data) {
  * 使用硅基流动 SiliconFlow API
  */
 export class AIService {
+  static pickMedicineDetailFromLocal(medicine = {}) {
+    const detail = {
+      name: medicine?.name || '',
+      indication: medicine?.indication || '',
+      usage: medicine?.usage || '',
+      contraindication: medicine?.contraindication || '',
+      precautions: medicine?.precautions || '',
+      sideEffects: medicine?.sideEffects || '',
+      interactions: medicine?.interactions || '',
+      storage: medicine?.storage || '',
+      description: medicine?.description || '',
+    };
+    const hasDetails = [
+      detail.indication,
+      detail.usage,
+      detail.contraindication,
+      detail.precautions,
+      detail.sideEffects,
+      detail.interactions,
+      detail.storage,
+      detail.description,
+    ].some((x) => String(x || '').trim().length > 0);
+    return hasDetails ? detail : null;
+  }
+
+  static buildMedicineDbSnippet(detail, fallbackName = '') {
+    const name = String(detail?.name || fallbackName || '未知药品').trim();
+    const fields = [
+      ['适应症', detail?.indication],
+      ['用法用量', detail?.usage],
+      ['禁忌', detail?.contraindication],
+      ['注意事项', detail?.precautions],
+      ['不良反应', detail?.sideEffects],
+      ['药物相互作用', detail?.interactions],
+      ['贮藏', detail?.storage],
+    ];
+    const lines = fields
+      .map(([label, value]) => {
+        const v = String(value || '').trim();
+        return v ? `  - ${label}：${v}` : '';
+      })
+      .filter(Boolean);
+    if (!lines.length) {
+      return `- ${name}：暂无可用说明书详情`;
+    }
+    return [`- ${name}：`, ...lines].join('\n');
+  }
+
+  static async buildMedicineLeafletContext(medicines = []) {
+    const list = Array.isArray(medicines) ? medicines : [];
+    if (!list.length) return '药品说明书信息：当前无药物管理数据。';
+
+    // 限制条数，避免查询过慢和上下文过长。
+    const top = list.slice(0, 3);
+    const details = await Promise.all(
+      top.map(async (m) => {
+        const name = String(m?.name || '').trim();
+        if (!name) return { name: '未命名药品', detail: null };
+        const localDetail = this.pickMedicineDetailFromLocal(m);
+        if (localDetail) return { name, detail: localDetail };
+        try {
+          const detail = await MedicineDBService.searchMedicine(name);
+          if (detail?.hasDetails) return { name, detail };
+          return { name, detail: null };
+        } catch {
+          return { name, detail: null };
+        }
+      })
+    );
+
+    const blocks = details.map(({ name, detail }) =>
+      this.buildMedicineDbSnippet(detail, name)
+    );
+    if (list.length > top.length) {
+      blocks.push(`- 其余 ${list.length - top.length} 个药品未展开说明书，请按需进一步查询。`);
+    }
+    return ['药品说明书信息（优先基于数据库/说明书）：', ...blocks].join('\n');
+  }
+
   static extractMarkdownSection(markdown, headingCandidates) {
     const text = String(markdown || '');
     if (!text.trim()) return '';
@@ -410,20 +490,62 @@ ${summary}
    * AI健康问答
    */
   static async healthQnA(question, context = {}) {
-    const contextInfo = context.medicines
-      ? `当前管理的药品：${context.medicines.map(m => m.name).join('、')}`
-      : '';
+    const healthData =
+      context?.healthData && typeof context.healthData === 'object'
+        ? context.healthData
+        : {};
+    const medicines = Array.isArray(context?.medicines) ? context.medicines : [];
+    const devices = Array.isArray(context?.devices) ? context.devices : [];
+    const tongueInsight =
+      context?.tongueInsight && typeof context.tongueInsight === 'object'
+        ? context.tongueInsight
+        : await this.getLatestTongueInsight();
+    const healthSummary =
+      typeof context?.healthSummary === 'string' && context.healthSummary.trim()
+        ? context.healthSummary.trim()
+        : buildHealthAdviceSummary({
+            heartRate: Array.isArray(context?.heartRate)
+              ? context.heartRate
+              : healthData?.heartRate || [],
+            bloodGlucose: Array.isArray(context?.bloodGlucose)
+              ? context.bloodGlucose
+              : healthData?.bloodGlucose || [],
+            sleep: Array.isArray(context?.sleep) ? context.sleep : healthData?.sleep || [],
+            medicines,
+            tongueInsight,
+          });
+
+    const deviceInfo = devices.length
+      ? `设备清单：${devices
+          .map((d) => {
+            const name = String(d?.name || d?.id || '未命名设备').trim();
+            const type = String(d?.type || '').trim();
+            const status = d?.connected ? '在线' : '离线';
+            return `${name}${type ? `(${type})` : ''}-${status}`;
+          })
+          .join('；')}`
+      : '设备清单：暂无已连接设备记录';
+    const medicineLeafletContext = await this.buildMedicineLeafletContext(medicines);
 
     const prompt = `你是一位专业的健康管理助手。用户提问：${question}
 
-${contextInfo ? `上下文信息：${contextInfo}` : ''}
+以下是该用户在本应用中的完整健康数据摘要，请优先基于这些内容回答（禁止编造摘要中不存在的数据）：
+${healthSummary}
 
-请用专业但易懂的中文回答，如果涉及用药，请提醒用户咨询医生。`;
+${deviceInfo}
+${medicineLeafletContext}
+
+回答要求：
+1) 先直接回答用户问题，再给出可执行建议。
+2) 若某项数据缺失，要明确说“目前暂无该项记录”，并说明建议补充的监测方式。
+3) 若涉及用药，优先引用上面的说明书信息回答“适应症、用法、禁忌、注意事项、相互作用”；若说明书字段缺失请明确说明“说明书暂无该项信息”。
+4) 若涉及异常指标或风险，提醒用户及时咨询医生。`;
 
     const messages = [
       {
         role: 'system',
-        content: '你是一位专业的健康管理助手，擅长回答健康相关问题，但会提醒用户重要问题需咨询医生。',
+        content:
+          '你是一位专业的健康管理助手，回答时必须结合用户的应用内健康数据摘要，避免空泛套话。',
       },
       {
         role: 'user',
@@ -431,7 +553,8 @@ ${contextInfo ? `上下文信息：${contextInfo}` : ''}
       },
     ];
 
-    return await this.callAI(messages);
+    const raw = await this.callAI(messages);
+    return sanitizeHealthAdviceText(raw);
   }
 
   /**

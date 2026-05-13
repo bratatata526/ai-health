@@ -25,3 +25,11 @@ class Settings:
         "ARK_BASE_URL",
         "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
     )
+    ARK_TIMEOUT_SECONDS: int = int(os.getenv("ARK_TIMEOUT_SECONDS", "60"))
+    ARK_MAX_RETRIES: int = int(os.getenv("ARK_MAX_RETRIES", "3"))
+    ARK_RETRY_BASE_DELAY_SECONDS: float = float(
+        os.getenv("ARK_RETRY_BASE_DELAY_SECONDS", "1.5")
+    )
+    ARK_MIN_INTERVAL_SECONDS: float = float(
+        os.getenv("ARK_MIN_INTERVAL_SECONDS", "1.0")
+    )

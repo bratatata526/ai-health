@@ -927,6 +927,18 @@ export default function MedicineScreen() {
       const frequency = canUseRecognition
         ? (recognitionResult.frequency || '每日2次')
         : (manualFrequency || '每日2次');
+      const leafletFields = canUseRecognition
+        ? {
+            indication: recognitionResult.indication || '',
+            contraindication: recognitionResult.contraindication || '',
+            usage: recognitionResult.usage || '',
+            sideEffects: recognitionResult.sideEffects || '',
+            precautions: recognitionResult.precautions || '',
+            interactions: recognitionResult.interactions || '',
+            storage: recognitionResult.storage || '',
+            description: recognitionResult.description || '',
+          }
+        : {};
 
       if (editingMedicine) {
         // 更新现有药品
@@ -934,6 +946,7 @@ export default function MedicineScreen() {
           name: medicineName,
           dosage,
           frequency,
+          ...leafletFields,
           images: selectedImages,
           image: selectedImages[0],
         };
@@ -950,6 +963,7 @@ export default function MedicineScreen() {
           name: medicineName,
           dosage,
           frequency,
+          ...leafletFields,
           images: selectedImages,
           image: selectedImages[0],
           createdAt: new Date().toISOString(),
