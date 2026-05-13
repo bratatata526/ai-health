@@ -5,6 +5,94 @@ import { buildHealthAdviceSummary } from '../utils/healthSummaryForAI';
 import { sanitizeHealthAdviceText } from '../utils/sanitizeAiOutput';
 import { SecureStorage } from '../utils/secureStorage';
 
+/** 清理模型退化输出：压缩连续重复字符、去除 markdown 围栏、归一化中文引号 */
+function sanitizeDegenerateText(input) {
+  let s = String(input || '');
+  if (!s) return '';
+  // 去除 markdown 代码围栏
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
+  // 中文双引号 → 英文双引号
+  s = s.replace(/[\u201c\u201d\u2033]/g, '"').replace(/[\u2018\u2019\u2032]/g, "'");
+  // 压缩连续出现超过 3 次的单字符（如 zzzz / """" / }}}} / ,,,,）
+  s = s.replace(/(.)\1{3,}/g, (m, ch) => ch.repeat(2));
+  // 合并中英文混用的连续标点重复（如 "，，，,,," → "，"）
+  s = s.replace(/([，,。.；;：:、])[，,。.；;：:、]{1,}/g, '$1');
+  // 压缩重复出现超过 2 次的短片段（3-30 字符）
+  s = s.replace(/(.{3,30}?)\1{2,}/g, '$1');
+  // 去除夹在中文之间或行首/行尾的孤立单 ASCII 字母（如 "开水冲zz" / "  \"z"）
+  s = s.replace(/([\u4e00-\u9fa5])[a-zA-Z]{1,2}(?=[\u4e00-\u9fa5]|[，。；：、,.!?！？]|$)/g, '$1');
+  s = s.replace(/(^|[\s\n\r"':,{}\[\]])[a-zA-Z]{1,2}(?=[\s\n\r"':,{}\[\]]|$)/g, '$1');
+  // 再次压缩多余空白与换行
+  s = s.replace(/[\t ]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
+  return s.trim();
+}
+
+/** 判定清洗后的字段是否仍然是无意义/退化内容 */
+function isDegenerateFieldText(v) {
+  const s = String(v || '').trim();
+  if (!s) return true;
+  // 没有任何中文字符，且长度很短，视为无效
+  const hasChinese = /[\u4e00-\u9fa5]/.test(s);
+  if (!hasChinese && s.length < 8) return true;
+  // 中文字符占比过低（<30%）且总长很短，判定为噪声
+  const chineseCount = (s.match(/[\u4e00-\u9fa5]/g) || []).length;
+  if (s.length <= 20 && chineseCount / s.length < 0.3) return true;
+  // 基本由标点/符号构成
+  if (!/[\u4e00-\u9fa5A-Za-z0-9]/.test(s)) return true;
+  return false;
+}
+
+/** 限制字段长度并去除不可预期的堆出内容；若仍然是退化文本则返回空串 */
+function clipGuideField(v, max = 240) {
+  const s = sanitizeDegenerateText(String(v || ''));
+  if (isDegenerateFieldText(s)) return '';
+  if (s.length <= max) return s;
+  return s.slice(0, max).trim() + '…';
+}
+
+/** 容错解析药品说明 JSON：去 markdown 围栏 / 提取 {...} 最外层 / 归一化引号 / 去除 // 注释 */
+function parseMedicineGuideText(text) {
+  if (!text) return null;
+  let raw = String(text);
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  // 提取从第一个 { 到最后一个 } 的片段
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first === -1 || last === -1 || last <= first) return null;
+  let block = raw.slice(first, last + 1);
+  // 归一化中文引号
+  block = block.replace(/[\u201c\u201d\u2033]/g, '"').replace(/[\u2018\u2019\u2032]/g, "'");
+  // 去除行尾 // 注释
+  block = block.replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/[^\n]*/g, '');
+  // 去除多余退化重复字符
+  block = block.replace(/(.)\1{5,}/g, (m, ch) => ch.repeat(3));
+  // 去除尾部多余逗号
+  block = block.replace(/,\s*([}\]])/g, '$1');
+
+  // 尝试 JSON.parse
+  try {
+    const obj = JSON.parse(block);
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) return obj;
+  } catch {
+    // 逐字段调用正则提取作为最后手段
+  }
+
+  const fields = ['indication', 'usage', 'contraindication', 'precautions', 'sideEffects', 'interactions', 'storage'];
+  const result = {};
+  let hit = 0;
+  for (const f of fields) {
+    const re = new RegExp('"' + f + '"\\s*:\\s*"([\\s\\S]*?)"\\s*(?:,|\\}|$)');
+    const m = block.match(re);
+    if (m && typeof m[1] === 'string') {
+      result[f] = m[1].replace(/\\"/g, '"').replace(/\\n/g, '\n').trim();
+      hit += 1;
+    } else {
+      result[f] = '';
+    }
+  }
+  return hit > 0 ? result : null;
+}
+
 /** 从 OpenAI 兼容的 chat/completions JSON 中提取助手正文（兼容部分厂商字段差异） */
 function extractOpenAIChatContent(data) {
   const choice = data?.choices?.[0];
@@ -443,56 +531,93 @@ ${contextInfo ? `上下文信息：${contextInfo}` : ''}
     const medicineName = String(name || '').trim();
     if (!medicineName) throw new Error('缺少药品名称');
 
-    const prompt = `请你作为“临床药师”，为药品《${medicineName}》生成一份【简明说明（摘要）】。
+    const buildPrompt = (includeOcr) => `请你作为“临床药师”，为药品《${medicineName}》生成一份【简明说明（摘要）】。
 
 已知信息（可能不完整）：
 - 识别到的剂量：${dosage || '未知'}
 - 识别到的频率：${frequency || '未知'}
-- 包装/说明书 OCR 原文（可能有噪声）：${ocrRawText ? `\n"""${String(ocrRawText).slice(0, 2000)}"""\n` : '无'}
-
+${includeOcr && ocrRawText ? `- 包装/说明书 OCR 原文（可能有噪声，仅供参考，若有乱码请忽略）：\n"""${String(ocrRawText).slice(0, 800).replace(/["'\\]/g, ' ')}"""\n` : ''}
 要求：
-1) 只输出 JSON（不要 markdown，不要多余解释），字段固定为：
-{
-  "indication": "...",           // 适应症/用于治疗什么
-  "usage": "...",                // 用法用量（结合已知剂量/频率，如不确定要说明“不确定”并建议遵医嘱/说明书）
-  "contraindication": "...",     // 禁忌
-  "precautions": "...",          // 注意事项（重点：孕哺、肝肾功能、儿童、驾驶、酒精、常见警示）
-  "sideEffects": "...",          // 常见不良反应
-  "interactions": "...",         // 常见相互作用提示
-  "storage": "..."               // 贮藏
-}
-2) 内容使用中文，尽量客观；不确定的地方要明确“不确定/需核对说明书或咨询医生/药师”。
-3) 不要编造具体禁忌/剂量细节；如果无法判断就写“需核对说明书/遵医嘱”。`;
+1) 只输出一个合法 JSON 对象（不要 markdown 代码块，不要多余解释），所有字符串使用英文双引号包裹，字段固定为：
+{"indication":"...","usage":"...","contraindication":"...","precautions":"...","sideEffects":"...","interactions":"...","storage":"..."}
+2) 字段含义：indication=适应症；usage=用法用量；contraindication=禁忌；precautions=注意事项（孕哺、肝肾功能、儿童、驾驶、酒精等）；sideEffects=常见不良反应；interactions=常见相互作用；storage=贮藏。
+3) 内容使用规范中文，每个字段不超过120字，尽量客观；不确定的地方明确写“需核对说明书或咨询医生/药师”，不得编造具体剂量或禁忌。
+4) 严禁输出任何重复的字符或没实际意义的占位符（如反复的 z / " / { / }），严禁输出多个 JSON 对象，必须以 } 结尾。
+5) 若某字段确实无法给出信息，请使用固定文本“需核对说明书或咨询医生/药师”填充，不得留空字符串。`;
 
-    const messages = [
-      { role: 'system', content: '你是一位严谨的临床药师，避免编造，不确定时明确说明需要核对说明书或咨询医生/药师。' },
-      { role: 'user', content: prompt },
+    const buildMessages = (includeOcr) => [
+      { role: 'system', content: '你是一位严谨的临床药师。只输出一个合法 JSON 对象，不得包含任何重复无意义字符，不确定时明确说明需要核对说明书或咨询医生/药师。' },
+      { role: 'user', content: buildPrompt(includeOcr) },
     ];
 
-    const text = await this.callAI(messages);
+    const normalizeGuide = (raw) => ({
+      indication: clipGuideField(raw.indication),
+      usage: clipGuideField(raw.usage),
+      contraindication: clipGuideField(raw.contraindication),
+      precautions: clipGuideField(raw.precautions),
+      sideEffects: clipGuideField(raw.sideEffects),
+      interactions: clipGuideField(raw.interactions),
+      storage: clipGuideField(raw.storage),
+    });
+
+    const nonEmptyFieldCount = (g) =>
+      ['indication', 'usage', 'contraindication', 'precautions', 'sideEffects', 'interactions', 'storage']
+        .reduce((n, k) => (g && g[k] ? n + 1 : n), 0);
+
+    // 第一次调用：包含 OCR 原文作为参考
+    let text = '';
     try {
-      const json = JSON.parse(text);
-      return {
-        indication: String(json.indication || '').trim(),
-        usage: String(json.usage || '').trim(),
-        contraindication: String(json.contraindication || '').trim(),
-        precautions: String(json.precautions || '').trim(),
-        sideEffects: String(json.sideEffects || '').trim(),
-        interactions: String(json.interactions || '').trim(),
-        storage: String(json.storage || '').trim(),
-      };
-    } catch {
-      // 兜底：若模型未严格输出 JSON，则把原文塞到 description 里，至少给用户看到“能治什么/注意什么”的文本
-      return {
-        indication: '',
-        usage: '',
-        contraindication: '',
-        precautions: '',
-        sideEffects: '',
-        interactions: '',
-        storage: '',
-        description: String(text || '').trim(),
-      };
+      text = await this.callAI(buildMessages(true), {
+        temperature: 0.2,
+        maxTokens: 1200,
+        frequencyPenalty: 0.8,
+        presencePenalty: 0.4,
+        topP: 0.85,
+      });
+    } catch (e) {
+      console.warn('AI生成药品说明第一次调用失败:', e?.message || e);
     }
+
+    let parsed = parseMedicineGuideText(text);
+    let guide = parsed ? normalizeGuide(parsed) : null;
+
+    // 若解析失败或有效字段过少（说明模型被 OCR 噪声干扰发生退化），自动降级重试一次：去掉 OCR 原文，仅基于药品名
+    if (!guide || nonEmptyFieldCount(guide) < 2) {
+      console.warn('AI药品说明输出退化或字段过少，采用无OCR原文模式重试');
+      try {
+        const retryText = await this.callAI(buildMessages(false), {
+          temperature: 0.1,
+          maxTokens: 900,
+          frequencyPenalty: 1.0,
+          presencePenalty: 0.5,
+          topP: 0.8,
+        });
+        const retryParsed = parseMedicineGuideText(retryText);
+        if (retryParsed) {
+          const retryGuide = normalizeGuide(retryParsed);
+          if (nonEmptyFieldCount(retryGuide) >= nonEmptyFieldCount(guide || {})) {
+            guide = retryGuide;
+          }
+        }
+      } catch (e) {
+        console.warn('AI药品说明重试仍失败:', e?.message || e);
+      }
+    }
+
+    if (guide && nonEmptyFieldCount(guide) >= 1) {
+      return guide;
+    }
+
+    // 最终兜底：不再将原始噪声文本暴露给用户，给出友好提示
+    return {
+      indication: '',
+      usage: '',
+      contraindication: '',
+      precautions: '',
+      sideEffects: '',
+      interactions: '',
+      storage: '',
+      description: `未能自动生成《${medicineName}》的说明摘要，请重新拍摄清晰的说明书或直接查阅原说明书、咨询医生/药师。`,
+    };
   }
 }
