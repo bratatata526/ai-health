@@ -398,7 +398,7 @@ const styles = StyleSheet.create({
   },
   content: {
     width: '100%',
-    maxWidth: 1120,
+    maxWidth: 1300,
     alignSelf: 'center',
     padding: theme.spacing.md,
     gap: theme.spacing.md,
@@ -413,8 +413,8 @@ const styles = StyleSheet.create({
       web: {
         shadowColor: theme.shadow.color,
         shadowOpacity: 1,
-        shadowRadius: 16,
-        shadowOffset: { width: 0, height: 8 },
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
       },
     }),
   },
