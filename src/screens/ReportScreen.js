@@ -536,7 +536,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: theme.spacing.md,
-    maxWidth: 1100,
+    maxWidth: 1300,
     width: '100%',
     alignSelf: 'center',
   },

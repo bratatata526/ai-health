@@ -26,7 +26,7 @@ import { CloudSyncService } from './src/services/CloudSyncService';
 
 const Tab = createBottomTabNavigator();
 const navigationRef = createNavigationContainerRef();
-const WEB_SIDEBAR_WIDTH = 180;
+const WEB_SIDEBAR_WIDTH = 160;
 
 const PAGE_TITLES = {
   '首页': '首页',
@@ -131,6 +131,7 @@ export default function App() {
   const [authed, setAuthed] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState('首页');
+  const [hoveredItem, setHoveredItem] = useState(null);
   const [accountDialogVisible, setAccountDialogVisible] = useState(false);
   const [pwdDialogVisible, setPwdDialogVisible] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
@@ -238,10 +239,15 @@ export default function App() {
             <View style={styles.webSidebarMenu}>
               {WEB_NAV_ITEMS.map((item) => {
                 const focused = activeTab === item.name;
+                const hovered = hoveredItem === item.name;
                 return (
                   <TouchableOpacity
                     key={item.name}
-                    style={[styles.webSidebarItem, focused && styles.webSidebarItemActive]}
+                    style={[
+                      styles.webSidebarItem,
+                      focused && styles.webSidebarItemActive,
+                      !focused && hovered && styles.webSidebarItemHover,
+                    ]}
                     activeOpacity={0.8}
                     onPress={() => {
                       setActiveTab(item.name);
@@ -249,6 +255,8 @@ export default function App() {
                         navigationRef.navigate(item.name);
                       }
                     }}
+                    onMouseEnter={() => setHoveredItem(item.name)}
+                    onMouseLeave={() => setHoveredItem(null)}
                   >
                     {item.name === 'AI助手' ? (
                       <AIIcon
@@ -270,6 +278,19 @@ export default function App() {
                 );
               })}
             </View>
+            <View style={{ flex: 1 }} />
+            <View style={styles.webSidebarFooter}>
+              <TouchableOpacity
+                style={styles.webSidebarAccountBtn}
+                activeOpacity={0.7}
+                onPress={openAccountDialog}
+                onMouseEnter={() => setHoveredItem('__account__')}
+                onMouseLeave={() => setHoveredItem(null)}
+              >
+                <Ionicons name="person-circle-outline" size={20} color={hoveredItem === '__account__' ? theme.colors.primary : theme.colors.textSecondary} />
+                <Text style={[styles.webSidebarAccountText, hoveredItem === '__account__' && { color: theme.colors.primary }]}>账号</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           <View style={styles.webMainContent}>
           <Tab.Navigator
@@ -282,10 +303,12 @@ export default function App() {
               },
               headerStyle: {
                 backgroundColor: theme.colors.surface,
-                borderBottomWidth: 1,
-                borderBottomColor: theme.colors.outlineVariant,
+                borderBottomWidth: 0,
                 elevation: 0,
-                shadowOpacity: 0,
+                shadowColor: 'rgba(15, 23, 42, 0.06)',
+                shadowOpacity: 1,
+                shadowRadius: 6,
+                shadowOffset: { width: 0, height: 2 },
               },
               headerTintColor: theme.colors.text,
               headerTitleStyle: {
@@ -423,6 +446,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingTop: 14,
     paddingBottom: 12,
+    flexShrink: 0,
   },
   webSidebarHeader: {
     alignItems: 'center',
@@ -452,9 +476,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: 'transparent',
   },
   webSidebarItemActive: {
-    backgroundColor: theme.colors.surfaceVariant,
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    borderLeftColor: theme.colors.primary,
+  },
+  webSidebarItemHover: {
+    backgroundColor: 'rgba(0, 0, 0, 0.04)',
   },
   webSidebarItemText: {
     fontFamily: appFontFamilies.regular,
@@ -464,6 +494,24 @@ const styles = StyleSheet.create({
   webSidebarItemTextActive: {
     fontFamily: appFontFamilies.medium,
     color: theme.colors.primary,
+  },
+  webSidebarFooter: {
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.outlineVariant,
+    paddingTop: 10,
+  },
+  webSidebarAccountBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  webSidebarAccountText: {
+    fontFamily: appFontFamilies.regular,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
   },
   webMainContent: {
     flex: 1,

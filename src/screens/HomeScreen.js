@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert, Platform, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, ScrollView, Alert, Platform, TouchableOpacity } from 'react-native';
 import { Button, Text, Dialog, Portal, TextInput, Avatar } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -107,10 +107,6 @@ export default function HomeScreen({ navigation, onLogout }) {
     );
   };
 
-  // 响应式列数
-  const { width: screenWidth } = useWindowDimensions();
-  const cols = screenWidth >= 1024 ? 4 : screenWidth >= 720 ? 3 : 2;
-
   // 功能入口数据
   const features = [
     { key: 'med', icon: 'medical', color: theme.colors.primary, title: '药品管理', desc: '拍盒识别 · 定时提醒', nav: '药品' },
@@ -144,21 +140,23 @@ export default function HomeScreen({ navigation, onLogout }) {
       <View style={styles.content}>
         {/* 快捷入口 */}
         <Text style={styles.sectionTitle}>快捷入口</Text>
-        <View style={styles.gridRow}>
+        <View style={styles.list}>
           {features.map((f) => (
-            <View key={f.key} style={[styles.gridCell, { width: `${100 / cols}%` }]}>
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() => navigation.navigate(f.nav)}
-                style={styles.featureCard}
-              >
-                <View style={[styles.featureIconWrap, { backgroundColor: `${f.color}1A` }]}>
-                  <Ionicons name={f.icon} size={24} color={f.color} />
-                </View>
-                <Text style={styles.featureTitle}>{f.title}</Text>
-                <Text style={styles.featureDesc} numberOfLines={1}>{f.desc}</Text>
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              key={f.key}
+              activeOpacity={0.7}
+              onPress={() => navigation.navigate(f.nav)}
+              style={styles.listItem}
+            >
+              <View style={[styles.listIconWrap, { backgroundColor: `${f.color}1A` }]}>
+                <Ionicons name={f.icon} size={22} color={f.color} />
+              </View>
+              <View style={styles.listTextWrap}>
+                <Text style={styles.listTitle}>{f.title}</Text>
+                <Text style={styles.listDesc} numberOfLines={1}>{f.desc}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+            </TouchableOpacity>
           ))}
         </View>
 
@@ -252,7 +250,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    maxWidth: 1100,
+    maxWidth: 1350,
     width: '100%',
     alignSelf: 'center',
   },
@@ -284,7 +282,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: theme.spacing.md,
     paddingTop: theme.spacing.lg,
-    maxWidth: 1100,
+    maxWidth: 1350,
     width: '100%',
     alignSelf: 'center',
   },
@@ -296,23 +294,17 @@ const styles = StyleSheet.create({
     paddingLeft: theme.spacing.xs,
   },
   // 网格
-  gridRow: {
+  list: {
+    gap: theme.spacing.sm,
+  },
+  listItem: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginHorizontal: -theme.spacing.xs,
-  },
-  gridCell: {
-    paddingHorizontal: theme.spacing.xs,
-    paddingVertical: theme.spacing.xs,
-  },
-  // 功能入口卡
-  featureCard: {
+    alignItems: 'center',
     backgroundColor: theme.colors.surface,
     borderRadius: theme.borderRadius.lg,
     padding: theme.spacing.md,
     borderWidth: 1,
     borderColor: theme.colors.outlineVariant,
-    minHeight: 110,
     ...Platform.select({
       ios: {
         shadowColor: theme.shadow.color,
@@ -330,22 +322,25 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  featureIconWrap: {
-    width: 40,
-    height: 40,
+  listIconWrap: {
+    width: 44,
+    height: 44,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: theme.spacing.sm,
+    marginRight: theme.spacing.md,
   },
-  featureTitle: {
+  listTextWrap: {
+    flex: 1,
+  },
+  listTitle: {
     ...textStyles.title,
     fontSize: 15,
     color: theme.colors.text,
   },
-  featureDesc: {
+  listDesc: {
     ...textStyles.body,
-    fontSize: 12,
+    fontSize: 13,
     color: theme.colors.textSecondary,
     marginTop: 2,
   },
