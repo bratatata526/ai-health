@@ -1,7 +1,9 @@
 import { DeviceService } from './DeviceService';
 import { MedicineService } from './MedicineService';
 import { AIService } from './AIService';
+import { AuthService } from './AuthService';
 import { SecureStorage } from '../utils/secureStorage';
+import { computeBmi, normalizeBodyMetrics } from '../utils/bmi';
 
 function mean(values) {
   if (!values.length) return 0;
@@ -297,6 +299,12 @@ export class ReportService {
     try {
       const healthData = await DeviceService.getHealthData();
       const medicines = await MedicineService.getAllMedicines();
+      const profile = await AuthService.getProfile();
+      const bodyMetrics = normalizeBodyMetrics({
+        heightCm: profile?.heightCm,
+        weightKg: profile?.weightKg,
+      });
+      const bmi = computeBmi(bodyMetrics.heightCm, bodyMetrics.weightKg)?.value ?? null;
 
       // 计算时间范围
       const now = new Date();
@@ -422,6 +430,9 @@ export class ReportService {
       return {
         type,
         period: type === 'week' ? '最近一周' : '最近一月',
+        heightCm: bodyMetrics.heightCm,
+        weightKg: bodyMetrics.weightKg,
+        bmi,
         avgHeartRate,
         avgBloodGlucose,
         avgSleep,

@@ -374,6 +374,9 @@ const styles = StyleSheet.create({
   containerContent: {
     padding: theme.spacing.md,
     gap: theme.spacing.md,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
   },
   card: {
     borderRadius: theme.borderRadius.lg,

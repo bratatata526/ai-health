@@ -114,7 +114,17 @@ export class CloudSyncService {
     const token = await AuthService.getToken();
     if (!token) throw new Error('未登录');
     const remote = await httpJson('/data', { method: 'GET', token });
-    const remoteProfile = remote?.profile || null;
+    const remoteTopProfile = remote?.profile;
+    const remoteSnapshotProfile = remote?.snapshot?.profile;
+    const remoteProfile = (
+      (remoteTopProfile && typeof remoteTopProfile === 'object')
+      || (remoteSnapshotProfile && typeof remoteSnapshotProfile === 'object')
+    )
+      ? {
+          ...(remoteTopProfile && typeof remoteTopProfile === 'object' ? remoteTopProfile : {}),
+          ...(remoteSnapshotProfile && typeof remoteSnapshotProfile === 'object' ? remoteSnapshotProfile : {}),
+        }
+      : null;
     const remoteData = remote?.snapshot?.data || null;
     // 下载覆盖本地时，避免触发“自动上传”回写
     if (remoteProfile) await SecureStorage.setItem('@user_profile', remoteProfile, { silent: true });
