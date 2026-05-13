@@ -112,6 +112,47 @@ export default function MedicineScreen() {
     return new Map(medicines.map((m) => [m.id, m]));
   }, [medicines]);
 
+  const fileToDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(new Error('读取图片失败'));
+      reader.readAsDataURL(file);
+    });
+
+  const toPersistableImageUri = async (asset) => {
+    if (!asset) return null;
+    if (typeof asset.uri === 'string' && asset.uri.startsWith('data:')) {
+      return asset.uri;
+    }
+
+    // Web 端优先将 File 转为 data URL，避免 blob: 地址在刷新后失效
+    if (Platform.OS === 'web' && asset.file instanceof File) {
+      try {
+        const dataUrl = await fileToDataUrl(asset.file);
+        if (dataUrl) return dataUrl;
+      } catch (e) {
+        console.warn('转换图片为 data URL 失败，将回退到原始 URI:', e);
+      }
+    }
+
+    return asset.uri || null;
+  };
+
+  const appendSelectedAssets = async (assets) => {
+    const mapped = await Promise.all((assets || []).map((asset) => toPersistableImageUri(asset)));
+    const validUris = mapped.filter((uri) => typeof uri === 'string' && uri.trim().length > 0);
+    if (validUris.length === 0) return;
+
+    const newImages = [...selectedImages, ...validUris];
+    if (newImages.length > 9) {
+      Alert.alert('提示', '最多只能上传9张图片，已自动选择前9张');
+      setSelectedImages(newImages.slice(0, 9));
+    } else {
+      setSelectedImages(newImages);
+    }
+  };
+
   const formatTime = (iso) => {
     try {
       const d = new Date(iso);
@@ -794,14 +835,7 @@ export default function MedicineScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const newImages = [...selectedImages, ...result.assets.map(asset => asset.uri)];
-        if (newImages.length > 9) {
-          Alert.alert('提示', '最多只能上传9张图片，已自动选择前9张');
-          setSelectedImages(newImages.slice(0, 9));
-        } else {
-          setSelectedImages(newImages);
-        }
-        
+        await appendSelectedAssets(result.assets);
         // 上传照片后，不自动识别，等待用户点击OCR识别按钮
         setDialogVisible(true);
       }
@@ -838,14 +872,7 @@ export default function MedicineScreen() {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const newImages = [...selectedImages, ...result.assets.map(asset => asset.uri)];
-        if (newImages.length > 9) {
-          Alert.alert('提示', '最多只能上传9张图片，已自动选择前9张');
-          setSelectedImages(newImages.slice(0, 9));
-        } else {
-          setSelectedImages(newImages);
-        }
-        
+        await appendSelectedAssets(result.assets);
         // 上传照片后，不自动识别，等待用户点击OCR识别按钮
         setDialogVisible(true);
       }
@@ -930,6 +957,18 @@ export default function MedicineScreen() {
       const frequency = canUseRecognition
         ? (recognitionResult.frequency || '每日2次')
         : (manualFrequency || '每日2次');
+      const leafletFields = canUseRecognition
+        ? {
+            indication: recognitionResult.indication || '',
+            contraindication: recognitionResult.contraindication || '',
+            usage: recognitionResult.usage || '',
+            sideEffects: recognitionResult.sideEffects || '',
+            precautions: recognitionResult.precautions || '',
+            interactions: recognitionResult.interactions || '',
+            storage: recognitionResult.storage || '',
+            description: recognitionResult.description || '',
+          }
+        : {};
 
       if (editingMedicine) {
         // 更新现有药品
@@ -937,6 +976,7 @@ export default function MedicineScreen() {
           name: medicineName,
           dosage,
           frequency,
+          ...leafletFields,
           images: selectedImages,
           image: selectedImages[0],
         };
@@ -953,6 +993,7 @@ export default function MedicineScreen() {
           name: medicineName,
           dosage,
           frequency,
+          ...leafletFields,
           images: selectedImages,
           image: selectedImages[0],
           createdAt: new Date().toISOString(),

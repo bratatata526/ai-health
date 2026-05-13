@@ -5,6 +5,7 @@ import time
 import uuid
 from datetime import datetime
 from io import BytesIO
+from typing import Optional
 
 import requests
 from fastapi import APIRouter, File, Form, UploadFile
@@ -15,6 +16,8 @@ from ..models.database import SessionLocal
 from ..models.models import AnalysisTask
 
 router_tongue_analysis = APIRouter()
+_ark_rate_limit_lock = threading.Lock()
+_last_ark_request_ts = 0.0
 
 feature_map = {
     "tongue_color": {
@@ -74,6 +77,28 @@ def parse_features(result: dict):
     }
 
 
+def _parse_retry_after_seconds(retry_after_value: Optional[str]) -> Optional[float]:
+    if not retry_after_value:
+        return None
+    try:
+        return max(0.0, float(retry_after_value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _wait_for_ark_min_interval():
+    global _last_ark_request_ts
+    min_interval = max(0.0, float(settings.ARK_MIN_INTERVAL_SECONDS))
+    if min_interval <= 0:
+        return
+    with _ark_rate_limit_lock:
+        now = time.monotonic()
+        wait_seconds = min_interval - (now - _last_ark_request_ts)
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+        _last_ark_request_ts = time.monotonic()
+
+
 def call_doubao_multimodal(segmented_image_base64: str, features: dict, user_input: str = ""):
     if not settings.ARK_API_KEY or not settings.ARK_MODEL_ID:
         return {
@@ -129,27 +154,66 @@ def call_doubao_multimodal(segmented_image_base64: str, features: dict, user_inp
         "Authorization": f"Bearer {settings.ARK_API_KEY}",
     }
 
-    try:
-        response = requests.post(
-            settings.ARK_BASE_URL,
-            json=payload,
-            headers=headers,
-            timeout=60,
-        )
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        return {
-            "ok": True,
-            "content": content,
-            "error": "",
-        }
-    except Exception as error:
-        return {
-            "ok": False,
-            "content": "",
-            "error": str(error),
-        }
+    max_retries = max(0, int(settings.ARK_MAX_RETRIES))
+    base_delay = max(0.1, float(settings.ARK_RETRY_BASE_DELAY_SECONDS))
+    request_timeout = max(10, int(settings.ARK_TIMEOUT_SECONDS))
+
+    for attempt in range(max_retries + 1):
+        try:
+            _wait_for_ark_min_interval()
+            response = requests.post(
+                settings.ARK_BASE_URL,
+                json=payload,
+                headers=headers,
+                timeout=request_timeout,
+            )
+
+            if response.status_code == 429:
+                retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
+                wait_seconds = retry_after if retry_after is not None else base_delay * (2 ** attempt)
+                if attempt < max_retries:
+                    time.sleep(min(wait_seconds, 60.0))
+                    continue
+                error_text = response.text[:200] if response.text else "触发限流"
+                return {
+                    "ok": False,
+                    "content": "",
+                    "error": f"Doubao 限流(429)，请稍后重试。详情: {error_text}",
+                }
+
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"]
+            return {
+                "ok": True,
+                "content": content,
+                "error": "",
+            }
+        except requests.exceptions.RequestException as error:
+            is_retryable = isinstance(
+                error,
+                (requests.exceptions.Timeout, requests.exceptions.ConnectionError),
+            )
+            if is_retryable and attempt < max_retries:
+                time.sleep(min(base_delay * (2 ** attempt), 60.0))
+                continue
+            return {
+                "ok": False,
+                "content": "",
+                "error": str(error),
+            }
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            return {
+                "ok": False,
+                "content": "",
+                "error": f"Doubao 响应解析失败: {error}",
+            }
+
+    return {
+        "ok": False,
+        "content": "",
+        "error": "Doubao 请求失败：超过最大重试次数",
+    }
 
 
 def set_task_status(task_id: str, status: str, progress: int = None, error: str = None, result_data: dict = None):
