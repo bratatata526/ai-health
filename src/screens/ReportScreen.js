@@ -369,7 +369,7 @@ export default function ReportScreen() {
                 <Title style={styles.sectionTitle}>心率趋势</Title>
                 <LineChart
                   data={report.trends.heartRate}
-                  width={width - 64}
+                  width={Math.min(width - 64, 1036)}
                   height={220}
                   chartConfig={{
                     ...chartConfig,
@@ -390,7 +390,7 @@ export default function ReportScreen() {
                 <Title style={styles.sectionTitle}>血糖趋势</Title>
                 <LineChart
                   data={report.trends.bloodGlucose}
-                  width={width - 64}
+                  width={Math.min(width - 64, 1036)}
                   height={220}
                   chartConfig={{
                     ...chartConfig,
@@ -410,7 +410,7 @@ export default function ReportScreen() {
                 <Title style={styles.sectionTitle}>睡眠趋势</Title>
                 <StackedBarChart
                   data={sleepStageChartData}
-                  width={width - 72}
+                  width={Math.min(width - 72, 1028)}
                   height={220}
                   fromZero
                   segments={4}
@@ -553,6 +553,9 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: theme.spacing.md,
+    maxWidth: 1100,
+    width: '100%',
+    alignSelf: 'center',
   },
   loadingContainer: {
     flex: 1,

@@ -6,7 +6,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { optionalAppFonts } from './src/optionalFonts';
-import { Provider as PaperProvider, Text } from 'react-native-paper';
+import { Provider as PaperProvider, Text, Dialog, Portal, TextInput, Paragraph, Button } from 'react-native-paper';
 import { useFonts } from 'expo-font';
 
 import HomeScreen from './src/screens/HomeScreen';
@@ -22,10 +22,36 @@ import { theme, appFontFamilies } from './src/theme';
 import { MedicineService } from './src/services/MedicineService';
 import { AuthService } from './src/services/AuthService';
 import { AutoCloudSyncService } from './src/services/AutoCloudSyncService';
+import { CloudSyncService } from './src/services/CloudSyncService';
 
 const Tab = createBottomTabNavigator();
 const navigationRef = createNavigationContainerRef();
 const WEB_SIDEBAR_WIDTH = 180;
+
+const PAGE_TITLES = {
+  '首页': '首页',
+  '药品': '药品管理',
+  '设备': '设备数据',
+  '舌诊': 'AI 舌诊',
+  'AI助手': 'AI 助手',
+  '报告': '健康报告',
+};
+
+const formatSyncTime = (isoString) => {
+  if (!isoString) return '未知';
+  try {
+    const date = new Date(isoString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}`;
+  } catch {
+    return '未知';
+  }
+};
+
 const WEB_NAV_ITEMS = [
   { name: '首页', icon: 'home-outline', iconActive: 'home' },
   { name: '药品', icon: 'medical-outline', iconActive: 'medical' },
@@ -105,6 +131,11 @@ export default function App() {
   const [authed, setAuthed] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState('首页');
+  const [accountDialogVisible, setAccountDialogVisible] = useState(false);
+  const [pwdDialogVisible, setPwdDialogVisible] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [accountInfo, setAccountInfo] = useState({ profile: null, cloudMeta: null });
 
   useEffect(() => {
     (async () => {
@@ -122,6 +153,45 @@ export default function App() {
     AutoCloudSyncService.start();
     return () => AutoCloudSyncService.stop();
   }, []);
+
+  // 账号弹窗
+  const openAccountDialog = async () => {
+    try {
+      const profile = await AuthService.getProfile();
+      let cloudMeta = await CloudSyncService.getCloudMeta();
+      if (!cloudMeta?.updatedAt) {
+        try { cloudMeta = await CloudSyncService.refreshCloudMeta(); } catch {}
+      }
+      setAccountInfo({ profile, cloudMeta });
+    } catch {
+      setAccountInfo({ profile: null, cloudMeta: null });
+    }
+    setAccountDialogVisible(true);
+  };
+
+  const accountLogout = async () => {
+    try {
+      await AuthService.logout();
+      setAuthed(false);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  const accountChangePassword = async () => {
+    try {
+      await AuthService.changePassword({ oldPassword, newPassword });
+      setPwdDialogVisible(false);
+      setOldPassword('');
+      setNewPassword('');
+    } catch {}
+  };
+
+  const accountDeleteAccount = () => {
+    AuthService.deleteAccount()
+      .then(() => setAuthed(false))
+      .catch(() => {});
+  };
 
   // Expo Web：修复浏览器标签标题显示为 undefined 的问题
   useEffect(() => {
@@ -211,17 +281,28 @@ export default function App() {
                 display: 'none',
               },
               headerStyle: {
-                backgroundColor: theme.colors.primary,
+                backgroundColor: theme.colors.surface,
+                borderBottomWidth: 1,
+                borderBottomColor: theme.colors.outlineVariant,
+                elevation: 0,
+                shadowOpacity: 0,
               },
-              headerTintColor: '#fff',
+              headerTintColor: theme.colors.text,
               headerTitleStyle: {
                 fontFamily: appFontFamilies.bold,
-                fontWeight: 'bold',
+                fontWeight: '700',
+                fontSize: 17,
+                color: theme.colors.text,
               },
-              headerTitle: () => <LogoTitle />,
+              headerTitle: PAGE_TITLES[route.name] || route.name,
+              headerRight: () => (
+                <TouchableOpacity onPress={openAccountDialog} style={{ marginRight: 16 }}>
+                  <Ionicons name="person-circle-outline" size={28} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              ),
             })}
           >
-            <Tab.Screen name="首页">
+            <Tab.Screen name="首页" options={{ headerShown: false }}>
               {(props) => <HomeScreen {...props} onLogout={() => setAuthed(false)} />}
             </Tab.Screen>
             <Tab.Screen name="药品" component={MedicineScreen} />
@@ -260,6 +341,55 @@ export default function App() {
               }
             }}
           />
+          {/* 账号弹窗（全局） */}
+          <Portal>
+            <Dialog visible={accountDialogVisible} onDismiss={() => setAccountDialogVisible(false)}>
+              <Dialog.Title>账号与云同步</Dialog.Title>
+              <Dialog.Content>
+                <Paragraph>
+                  {accountInfo.profile
+                    ? `当前用户：${accountInfo.profile.name}（${accountInfo.profile.email}）`
+                    : '当前未获取到用户资料'}
+                </Paragraph>
+                <Paragraph style={{ marginTop: 8 }}>
+                  {accountInfo.cloudMeta?.updatedAt
+                    ? `上次同步时间：${formatSyncTime(accountInfo.cloudMeta.updatedAt)}`
+                    : '上次同步时间：暂无（建议先上传或下载）'}
+                </Paragraph>
+              </Dialog.Content>
+              <Dialog.Actions>
+                <Button onPress={() => setPwdDialogVisible(true)}>修改密码</Button>
+                <Button onPress={accountDeleteAccount} textColor={theme.colors.error}>注销账号</Button>
+                <Button onPress={accountLogout}>退出登录</Button>
+                <Button onPress={() => setAccountDialogVisible(false)}>关闭</Button>
+              </Dialog.Actions>
+            </Dialog>
+
+            <Dialog visible={pwdDialogVisible} onDismiss={() => setPwdDialogVisible(false)}>
+              <Dialog.Title>修改密码</Dialog.Title>
+              <Dialog.Content>
+                <TextInput
+                  label="旧密码"
+                  value={oldPassword}
+                  onChangeText={setOldPassword}
+                  secureTextEntry
+                  mode="outlined"
+                />
+                <TextInput
+                  label="新密码（至少6位）"
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  secureTextEntry
+                  mode="outlined"
+                  style={{ marginTop: 8 }}
+                />
+              </Dialog.Content>
+              <Dialog.Actions>
+                <Button onPress={() => setPwdDialogVisible(false)}>取消</Button>
+                <Button onPress={accountChangePassword} disabled={!oldPassword || !newPassword}>确定</Button>
+              </Dialog.Actions>
+            </Dialog>
+          </Portal>
           </View>
         )}
       </NavigationContainer>
