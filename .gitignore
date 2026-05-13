@@ -23,12 +23,13 @@ dist/
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
 
 *.md
 !README.md
 
 # TongueDiagnosis
-
 TongueDiagnosis/venv
 TongueDiagnosis/.venv312/
 **/__pycache__/
@@ -52,3 +53,24 @@ TongueDiagnosis/*.pkg
 TongueDiagnosis/*.zip
 TongueDiagnosis/*.7z
 TongueDiagnosis/*.tar.gz
+
+# Local cloud runtime data
+cloud-data/*.db-shm
+cloud-data/*.db-wal
+cloud-data/*.lock
+cloud-data/*.sqlite
+cloud-data/*.sqlite-*
+cloud-data/*.db-journal
+
+# 如果 cloud-data/*.db 也是每人本地开发文件，可取消下一行注释
+# cloud-data/*.db
+
+# Android local build cache
+android/.gradle/
+android/build/
+android/app/build/
+
+# Logs / temp
+*.log
+*.tmp
+*.temp

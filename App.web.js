@@ -6,7 +6,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { optionalAppFonts } from './src/optionalFonts';
-import { Provider as PaperProvider, Text, Dialog, Portal, TextInput, Paragraph, Button } from 'react-native-paper';
+import { Provider as PaperProvider, Text, Dialog, Portal, TextInput, Button } from 'react-native-paper';
 import { useFonts } from 'expo-font';
 
 import HomeScreen from './src/screens/HomeScreen';
@@ -18,6 +18,7 @@ import AIScreen from './src/screens/AIScreen';
 import TongueScreen from './src/screens/TongueScreen';
 import AIIcon from './src/components/AIIcon';
 import FloatingAIAssistant from './src/components/FloatingAIAssistant';
+import { AccountCloudModal } from './src/components/AccountCloudModal';
 import { theme, appFontFamilies } from './src/theme';
 import { MedicineService } from './src/services/MedicineService';
 import { AuthService } from './src/services/AuthService';
@@ -35,21 +36,6 @@ const PAGE_TITLES = {
   '舌诊': 'AI 舌诊',
   'AI助手': 'AI 助手',
   '报告': '健康报告',
-};
-
-const formatSyncTime = (isoString) => {
-  if (!isoString) return '未知';
-  try {
-    const date = new Date(isoString);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
-  } catch {
-    return '未知';
-  }
 };
 
 const WEB_NAV_ITEMS = [
@@ -365,29 +351,20 @@ export default function App() {
             }}
           />
           {/* 账号弹窗（全局） */}
-          <Portal>
-            <Dialog visible={accountDialogVisible} onDismiss={() => setAccountDialogVisible(false)}>
-              <Dialog.Title>账号与云同步</Dialog.Title>
-              <Dialog.Content>
-                <Paragraph>
-                  {accountInfo.profile
-                    ? `当前用户：${accountInfo.profile.name}（${accountInfo.profile.email}）`
-                    : '当前未获取到用户资料'}
-                </Paragraph>
-                <Paragraph style={{ marginTop: 8 }}>
-                  {accountInfo.cloudMeta?.updatedAt
-                    ? `上次同步时间：${formatSyncTime(accountInfo.cloudMeta.updatedAt)}`
-                    : '上次同步时间：暂无（建议先上传或下载）'}
-                </Paragraph>
-              </Dialog.Content>
-              <Dialog.Actions>
-                <Button onPress={() => setPwdDialogVisible(true)}>修改密码</Button>
-                <Button onPress={accountDeleteAccount} textColor={theme.colors.error}>注销账号</Button>
-                <Button onPress={accountLogout}>退出登录</Button>
-                <Button onPress={() => setAccountDialogVisible(false)}>关闭</Button>
-              </Dialog.Actions>
-            </Dialog>
+          <AccountCloudModal
+            visible={accountDialogVisible}
+            onDismiss={() => setAccountDialogVisible(false)}
+            profile={accountInfo.profile}
+            cloudMeta={accountInfo.cloudMeta}
+            onProfileUpdated={(nextProfile) => {
+              setAccountInfo((prev) => ({ ...prev, profile: nextProfile }));
+            }}
+            onOpenPassword={() => setPwdDialogVisible(true)}
+            onDeleteAccount={accountDeleteAccount}
+            onLogout={accountLogout}
+          />
 
+          <Portal>
             <Dialog visible={pwdDialogVisible} onDismiss={() => setPwdDialogVisible(false)}>
               <Dialog.Title>修改密码</Dialog.Title>
               <Dialog.Content>

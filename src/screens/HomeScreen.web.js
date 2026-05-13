@@ -1,30 +1,14 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert, Platform, TouchableOpacity, useWindowDimensions } from 'react-native';
-import { Button, Text, Dialog, Portal, TextInput, Paragraph } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, Alert, Platform, TouchableOpacity } from 'react-native';
+import { Button, Text, Dialog, Portal, TextInput } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { theme, textStyles } from '../theme';
 import { CloudSyncService } from '../services/CloudSyncService';
 import { AuthService } from '../services/AuthService';
-
-// 格式化日期时间为友好格式
-const formatSyncTime = (isoString) => {
-  if (!isoString) return '未知';
-  try {
-    const date = new Date(isoString);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${year}-${month}-${day} ${hours}:${minutes}`;
-  } catch {
-    return '未知';
-  }
-};
+import { AccountCloudModal } from '../components/AccountCloudModal';
 
 export default function HomeScreen({ navigation, onLogout }) {
-  const [syncing, setSyncing] = useState(false);
   const [accountDialogVisible, setAccountDialogVisible] = useState(false);
   const [pwdDialogVisible, setPwdDialogVisible] = useState(false);
   const [oldPassword, setOldPassword] = useState('');
@@ -165,29 +149,20 @@ export default function HomeScreen({ navigation, onLogout }) {
         </TouchableOpacity>
       </View>
 
-      <Portal>
-        <Dialog visible={accountDialogVisible} onDismiss={() => setAccountDialogVisible(false)}>
-          <Dialog.Title>账号与云同步</Dialog.Title>
-          <Dialog.Content>
-            <Paragraph>
-              {accountInfo.profile
-                ? `当前用户：${accountInfo.profile.name}（${accountInfo.profile.email}）`
-                : '当前未获取到用户资料'}
-            </Paragraph>
-            <Paragraph style={{ marginTop: theme.spacing.sm }}>
-              {accountInfo.cloudMeta?.updatedAt
-                ? `上次同步时间：${formatSyncTime(accountInfo.cloudMeta.updatedAt)}`
-                : '上次同步时间：暂无（建议先上传或下载）'}
-            </Paragraph>
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setPwdDialogVisible(true)}>修改密码</Button>
-            <Button onPress={deleteAccount} textColor={theme.colors.error}>注销账号</Button>
-            <Button onPress={logout}>退出登录</Button>
-            <Button onPress={() => setAccountDialogVisible(false)}>关闭</Button>
-          </Dialog.Actions>
-        </Dialog>
+      <AccountCloudModal
+        visible={accountDialogVisible}
+        onDismiss={() => setAccountDialogVisible(false)}
+        profile={accountInfo.profile}
+        cloudMeta={accountInfo.cloudMeta}
+        onProfileUpdated={(nextProfile) => {
+          setAccountInfo((prev) => ({ ...prev, profile: nextProfile }));
+        }}
+        onOpenPassword={() => setPwdDialogVisible(true)}
+        onDeleteAccount={deleteAccount}
+        onLogout={logout}
+      />
 
+      <Portal>
         <Dialog visible={pwdDialogVisible} onDismiss={() => setPwdDialogVisible(false)}>
           <Dialog.Title>修改密码</Dialog.Title>
           <Dialog.Content>

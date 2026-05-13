@@ -16,7 +16,6 @@ import {
   Text,
   SegmentedButtons,
   ProgressBar,
-  Switch,
   ActivityIndicator,
 } from 'react-native-paper';
 import { LineChart, StackedBarChart } from 'react-native-chart-kit';
@@ -37,8 +36,7 @@ export default function ReportScreen() {
   const [reportType, setReportType] = useState('week');
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [useAI, setUseAI] = useState(false);
-  const [aiLoading, setAiLoading] = useState(false);
+  const [generatingAdvice, setGeneratingAdvice] = useState(false);
   const [profile, setProfile] = useState(null);
   const [assistantAdvice, setAssistantAdvice] = useState('');
 
@@ -71,7 +69,7 @@ export default function ReportScreen() {
   const loadReport = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await ReportService.generateReport(reportType, useAI);
+      const data = await ReportService.generateReport(reportType, false);
       setReport(data);
       await refreshAssistantAdvice();
     } catch (error) {
@@ -80,7 +78,24 @@ export default function ReportScreen() {
     } finally {
       setLoading(false);
     }
-  }, [reportType, useAI, refreshAssistantAdvice]);
+  }, [reportType, refreshAssistantAdvice]);
+
+  const generateAdvice = async () => {
+    try {
+      setGeneratingAdvice(true);
+      const text = await ExportService.ensurePersonalizedAdvice();
+      if (text) {
+        setAssistantAdvice(text);
+        Alert.alert('成功', '个性化健康建议已生成');
+      } else {
+        Alert.alert('提示', '暂未生成建议，请稍后重试');
+      }
+    } catch (error) {
+      Alert.alert('错误', '生成健康建议失败，请稍后重试');
+    } finally {
+      setGeneratingAdvice(false);
+    }
+  };
 
   useEffect(() => {
     loadReport();
@@ -105,9 +120,7 @@ export default function ReportScreen() {
 
   const exportReport = async () => {
     try {
-      const result = await ExportService.exportReport(reportType, 'pdf', {
-        useAI,
-      });
+      const result = await ExportService.exportReport(reportType, 'pdf');
       if (result?.success) {
         Alert.alert('成功', result.message || '报告已导出');
       } else {
@@ -290,14 +303,6 @@ export default function ReportScreen() {
                 { value: 'month', label: '月报告', labelStyle: styles.segmentLabel },
               ]}
             />
-            <View style={styles.aiToggleContainer}>
-              <Text style={styles.aiToggleLabel}>启用AI深度分析</Text>
-              <Switch
-                value={useAI}
-                onValueChange={setUseAI}
-                disabled={loading || aiLoading}
-              />
-            </View>
             <Paragraph style={styles.userMeta}>
               用户：
               {profile?.name || profile?.email || '未登录 / 本地用户'}
@@ -452,28 +457,26 @@ export default function ReportScreen() {
           </>
         )}
 
-        {/* AI深度分析 */}
-        {report.aiAnalysis && (
-          <Card style={styles.card}>
-            <Card.Content>
-              <View style={styles.aiHeader}>
-                <Ionicons name="sparkles" size={24} color={theme.colors.primary} />
-                <Title style={styles.sectionTitle}>AI深度分析</Title>
-              </View>
-              <Text style={styles.aiDisclaimer}>{AI_DISCLAIMER_ZH}</Text>
-              <Text style={styles.aiAnalysisText}>{report.aiAnalysis}</Text>
-            </Card.Content>
-          </Card>
-        )}
-
         {/* 健康建议 / 规则简要提示（与 PDF 逻辑一致） */}
         <Card style={styles.card}>
           <Card.Content>
-            <Title style={styles.sectionTitle}>
-              {assistantAdvice.trim().length > 0
-                ? '健康建议（AI 助手个性化建议）'
-                : '简要提示（规则引擎）'}
-            </Title>
+            <View style={styles.adviceHeader}>
+              <Title style={styles.sectionTitle}>
+                {assistantAdvice.trim().length > 0
+                  ? '健康建议（AI 助手个性化建议）'
+                  : '简要提示（规则引擎）'}
+              </Title>
+              <Button
+                mode="outlined"
+                compact
+                onPress={generateAdvice}
+                loading={generatingAdvice}
+                disabled={generatingAdvice}
+                style={styles.generateAdviceButton}
+              >
+                生成建议
+              </Button>
+            </View>
             {normalizedAssistantAdvice.length > 0 ? (
               <>
                 <Text style={styles.aiDisclaimer}>{AI_DISCLAIMER_ZH}</Text>
@@ -730,19 +733,14 @@ const styles = StyleSheet.create({
   buttonContent: {
     paddingVertical: theme.spacing.sm,
   },
-  aiToggleContainer: {
+  adviceHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: theme.spacing.md,
-    paddingTop: theme.spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.outlineVariant,
+    marginBottom: theme.spacing.sm,
   },
-  aiToggleLabel: {
-    ...textStyles.body,
-    fontSize: 14,
-    color: theme.colors.text,
+  generateAdviceButton: {
+    borderRadius: theme.borderRadius.md,
   },
   aiHeader: {
     flexDirection: 'row',

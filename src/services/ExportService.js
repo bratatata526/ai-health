@@ -36,6 +36,31 @@ function buildHealthReportPdfFilename(at = new Date()) {
  * 支持导出健康数据、药品信息、报告等为CSV、JSON格式
  */
 export class ExportService {
+  static async ensurePersonalizedAdvice() {
+    try {
+      const cached = await PersonalizedAdviceCache.get();
+      if (cached?.text && cached.text.trim().length > 0) {
+        return cached.text.trim();
+      }
+
+      const healthData = await DeviceService.getHealthDataForStorage();
+      const medicines = await MedicineService.getAllMedicines();
+      const userData = {
+        heartRate: healthData?.heartRate || [],
+        bloodGlucose: healthData?.bloodGlucose || [],
+        sleep: healthData?.sleep || [],
+        medicines: medicines || [],
+      };
+      const text = await AIService.generatePersonalizedAdvice(userData);
+      const trimmed = (text || '').trim();
+      if (trimmed) await PersonalizedAdviceCache.set(trimmed);
+      return trimmed;
+    } catch (e) {
+      console.warn('自动生成个性化建议失败:', e);
+      return '';
+    }
+  }
+
   /**
    * 导出服药记录（打卡/漏服/稍后）为 CSV
    */
@@ -175,6 +200,7 @@ export class ExportService {
   static async exportReportToText(reportType = 'week', useAI = false) {
     try {
       const report = await ReportService.generateReport(reportType, useAI);
+      const assistantAdvice = await this.ensurePersonalizedAdvice();
       const formatMetric = (value, unit) => (value != null ? `${value} ${unit}` : '未填写');
       const formatBmi = (value) => (value != null ? `${value}` : '未填写');
       
@@ -196,9 +222,13 @@ export class ExportService {
       text += `管理药品数: ${report.medicineCount}\n\n`;
       
       text += `=== 健康建议 ===\n`;
-      report.recommendations.forEach((rec, index) => {
-        text += `${index + 1}. ${rec}\n`;
-      });
+      if (assistantAdvice) {
+        text += `${assistantAdvice}\n`;
+      } else {
+        report.recommendations.forEach((rec, index) => {
+          text += `${index + 1}. ${rec}\n`;
+        });
+      }
       
       return text;
     } catch (error) {
@@ -222,29 +252,7 @@ export class ExportService {
 
     const reportPromise = ReportService.generateReport(reportType, useAI);
 
-    const assistantAdvicePromise = (async () => {
-      try {
-        const cached = await PersonalizedAdviceCache.get();
-        if (cached?.text && cached.text.trim().length > 0) {
-          return cached.text.trim();
-        }
-        const healthData = await DeviceService.getHealthData();
-        const medicines = await MedicineService.getAllMedicines();
-        const userData = {
-          heartRate: healthData?.heartRate || [],
-          bloodGlucose: healthData?.bloodGlucose || [],
-          sleep: healthData?.sleep || [],
-          medicines: medicines || [],
-        };
-        const text = await AIService.generatePersonalizedAdvice(userData);
-        const trimmed = (text || '').trim();
-        if (trimmed) await PersonalizedAdviceCache.set(trimmed);
-        return trimmed;
-      } catch (e) {
-        console.warn('导出 PDF：自动生成个性化建议失败', e);
-        return '';
-      }
-    })();
+    const assistantAdvicePromise = this.ensurePersonalizedAdvice();
 
     const [report, assistantAdvice] = await Promise.all([
       reportPromise,

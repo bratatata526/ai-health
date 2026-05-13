@@ -33,6 +33,7 @@ import ClockIcon from '../components/ClockIcon';
 import DatePicker from '../components/DatePicker';
 import TimePicker from '../components/TimePicker';
 import AIGeneratedIcon from '../components/AIGeneratedIcon';
+import { DrugInteractionCheckCard } from '../components/DrugInteractionCheckCard';
 import { theme, textStyles } from '../theme';
 import { MedicineService } from '../services/MedicineService';
 import { ExportService } from '../services/ExportService';
@@ -1105,6 +1106,7 @@ export default function MedicineScreen() {
             </Card.Content>
           </Card>
         )}
+        <DrugInteractionCheckCard medicines={medicines} />
         {medicines.length === 0 ? (
           <View style={styles.emptyState}>
             <Ionicons name="medical-outline" size={64} color={theme.colors.textSecondary} />

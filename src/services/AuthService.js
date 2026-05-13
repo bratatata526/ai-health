@@ -1,5 +1,6 @@
 import { CLOUD_CONFIG } from '../config/cloud';
 import { PersonalizedAdviceCache } from './PersonalizedAdviceCache';
+import { AIChatHistoryService } from './AIChatHistoryService';
 import { SecureStorage } from '../utils/secureStorage';
 
 const AUTH_TOKEN_KEY = '@auth_token';
@@ -64,7 +65,7 @@ export class AuthService {
     await SecureStorage.setItem(USER_PROFILE_KEY, result.profile);
     
     // 注册后清空本地业务数据（新用户应该从空白开始）
-    await this.clearLocalData();
+    await this.clearLocalData(result?.profile?.id || result?.profile?.email);
     
     return result.profile;
   }
@@ -78,7 +79,7 @@ export class AuthService {
     await SecureStorage.setItem(USER_PROFILE_KEY, result.profile);
     
     // 登录后清空本地数据，然后从云端同步（确保用户数据隔离）
-    await this.clearLocalData();
+    await this.clearLocalData(result?.profile?.id || result?.profile?.email);
     
     return result.profile;
   }
@@ -92,15 +93,15 @@ export class AuthService {
   }
 
   static async logout() {
+    const profile = await this.getProfile();
+    const userId = profile?.id || profile?.email;
+    await this.clearLocalData(userId);
     await SecureStorage.removeItem(AUTH_TOKEN_KEY);
     await SecureStorage.removeItem(USER_PROFILE_KEY);
-    
-    // 退出登录时清除所有本地业务数据（安全性 + 隐私保护）
-    await this.clearLocalData();
   }
 
   // 清除所有本地业务数据（不包括 token 和 profile）
-  static async clearLocalData() {
+  static async clearLocalData(userId) {
     const keysToRemove = [
       '@medicines',
       '@health_data',
@@ -115,6 +116,7 @@ export class AuthService {
       await SecureStorage.removeItem(key, { silent: true });
     }
     await PersonalizedAdviceCache.clear();
+    if (userId) await AIChatHistoryService.clear(userId);
   }
 
   static async changePassword({ oldPassword, newPassword }) {
