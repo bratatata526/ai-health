@@ -21,6 +21,7 @@ import TongueScreen from './src/screens/TongueScreen';
 import CareAccountsScreen from './src/screens/CareAccountsScreen';
 import AIIcon from './src/components/AIIcon';
 import FloatingAIAssistant from './src/components/FloatingAIAssistant';
+import ScreenFadeTransition from './src/components/ScreenFadeTransition';
 import { theme, appFontFamilies } from './src/theme';
 import {
   MedicineService,
@@ -234,10 +235,15 @@ export default function App() {
               tabBarInactiveTintColor: theme.colors.textSecondary,
               tabBarStyle: {
                 backgroundColor: theme.colors.surface,
-                borderTopColor: theme.colors.outlineVariant,
+                borderTopWidth: 0,
                 height: Platform.OS === 'android' ? 68 : 74,
                 paddingTop: Platform.OS === 'android' ? 3 : 6,
                 paddingBottom: Platform.OS === 'android' ? 6 : 8,
+                shadowColor: '#0F172A',
+                shadowOpacity: 0.08,
+                shadowRadius: 10,
+                shadowOffset: { width: 0, height: -3 },
+                elevation: 10,
               },
               tabBarIconStyle: {
                 marginTop: 1,
@@ -249,9 +255,15 @@ export default function App() {
                 paddingBottom: 2,
               },
               headerStyle: {
-                backgroundColor: theme.colors.primary,
+                backgroundColor: theme.colors.surface,
+                borderBottomWidth: 0,
+                shadowColor: '#0F172A',
+                shadowOpacity: 0.06,
+                shadowRadius: 8,
+                shadowOffset: { width: 0, height: 2 },
+                elevation: 4,
               },
-              headerTintColor: '#fff',
+              headerTintColor: theme.colors.text,
               headerTitleStyle: {
                 fontFamily: appFontFamilies.bold,
               },
@@ -260,19 +272,58 @@ export default function App() {
           >
             <Tab.Screen
               name="关怀"
-              component={CareAccountsScreen}
               options={{
                 headerTitle: '关怀账号',
               }}
-            />
-            <Tab.Screen name="首页">
-              {(props) => <HomeScreen {...props} onLogout={() => setAuthed(false)} />}
+            >
+              {(props) => (
+                <ScreenFadeTransition>
+                  <CareAccountsScreen {...props} />
+                </ScreenFadeTransition>
+              )}
             </Tab.Screen>
-            <Tab.Screen name="药品" component={MedicineScreen} />
-            <Tab.Screen name="设备" component={DeviceScreen} />
-            <Tab.Screen name="舌诊" component={TongueScreen} />
-            <Tab.Screen name="AI助手" component={AIScreen} />
-            <Tab.Screen name="报告" component={ReportScreen} />
+            <Tab.Screen name="首页">
+              {(props) => (
+                <ScreenFadeTransition>
+                  <HomeScreen {...props} onLogout={() => setAuthed(false)} />
+                </ScreenFadeTransition>
+              )}
+            </Tab.Screen>
+            <Tab.Screen name="药品">
+              {(props) => (
+                <ScreenFadeTransition>
+                  <MedicineScreen {...props} />
+                </ScreenFadeTransition>
+              )}
+            </Tab.Screen>
+            <Tab.Screen name="设备">
+              {(props) => (
+                <ScreenFadeTransition>
+                  <DeviceScreen {...props} />
+                </ScreenFadeTransition>
+              )}
+            </Tab.Screen>
+            <Tab.Screen name="舌诊">
+              {(props) => (
+                <ScreenFadeTransition>
+                  <TongueScreen {...props} />
+                </ScreenFadeTransition>
+              )}
+            </Tab.Screen>
+            <Tab.Screen name="AI助手">
+              {(props) => (
+                <ScreenFadeTransition>
+                  <AIScreen {...props} />
+                </ScreenFadeTransition>
+              )}
+            </Tab.Screen>
+            <Tab.Screen name="报告">
+              {(props) => (
+                <ScreenFadeTransition>
+                  <ReportScreen {...props} />
+                </ScreenFadeTransition>
+              )}
+            </Tab.Screen>
           </Tab.Navigator>
           <FloatingAIAssistant
             onNavigate={(target) => {
@@ -282,18 +333,81 @@ export default function App() {
             }}
             getPendingMedicines={async () => {
               try {
+                const parseHHMM = (val) => {
+                  const m = String(val || '').match(/^(\d{1,2}):(\d{2})$/);
+                  if (!m) return null;
+                  const hh = Number(m[1]);
+                  const mm = Number(m[2]);
+                  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+                  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+                };
+                const resolveMode = (med) => {
+                  const cfg = med?.reminderConfig || {};
+                  const raw = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : 'fixed_times');
+                  return raw === 'prn' ? 'fixed_times' : raw;
+                };
                 const allMeds = await MedicineService.getAllMedicines();
                 const pending = [];
                 for (const med of allMeds) {
+                  const mode = resolveMode(med);
                   const todayReminders = await MedicineService.getTodayReminders(med.id);
-                  const notTaken = todayReminders.filter(
+                  const activeNotTaken = todayReminders.filter(
                     (r) => r.status === 'scheduled' || r.status === 'snoozed'
                   );
-                  for (const r of notTaken) {
+                  if (mode === 'times_per_day') {
+                    const totalCount =
+                      todayReminders.length || Math.max(0, Number(med?.reminderConfig?.timesPerDay || 0));
+                    const remain = activeNotTaken.length;
+                    if (remain > 0) {
+                      pending.push({
+                        name: med.name,
+                        message: `💊 ${med.name} 今天还需服用 ${remain} 次（共 ${totalCount} 次）`,
+                      });
+                    }
+                    continue;
+                  }
+                  if (mode === 'interval_hours') {
+                    let nextAt = null;
+                    if (activeNotTaken.length > 0) {
+                      nextAt = activeNotTaken
+                        .map((r) => new Date(r.scheduledAt))
+                        .sort((a, b) => a - b)[0];
+                    } else {
+                      const cfg = med?.reminderConfig || {};
+                      const ih = Math.max(1, Number(cfg.intervalHours || 8));
+                      const startText = parseHHMM(cfg.intervalStartTime) || '08:00';
+                      const [sh, sm] = startText.split(':').map(Number);
+                      const now = new Date();
+                      const nowMin = now.getHours() * 60 + now.getMinutes();
+                      let nextMin = sh * 60 + sm;
+                      if (nowMin >= nextMin) {
+                        const step = Math.floor((nowMin - nextMin) / (ih * 60)) + 1;
+                        nextMin += step * ih * 60;
+                      }
+                      const d = new Date(now);
+                      d.setHours(Math.floor(nextMin / 60), nextMin % 60, 0, 0);
+                      if (d < now) d.setDate(d.getDate() + 1);
+                      nextAt = d;
+                    }
+                    if (nextAt) {
+                      const hh = String(nextAt.getHours()).padStart(2, '0');
+                      const mm = String(nextAt.getMinutes()).padStart(2, '0');
+                      pending.push({
+                        name: med.name,
+                        message: `💊 ${med.name} 下次建议服用时间：${hh}:${mm}`,
+                      });
+                    }
+                    continue;
+                  }
+                  for (const r of activeNotTaken) {
                     const d = new Date(r.scheduledAt);
                     const hh = String(d.getHours()).padStart(2, '0');
                     const mm = String(d.getMinutes()).padStart(2, '0');
-                    pending.push({ name: med.name, time: `${hh}:${mm}` });
+                    pending.push({
+                      name: med.name,
+                      time: `${hh}:${mm}`,
+                      message: `💊 ${med.name} 记得在 ${hh}:${mm} 服用`,
+                    });
                   }
                 }
                 return pending;

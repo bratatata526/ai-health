@@ -213,6 +213,7 @@ export default function FloatingAIAssistant({ onNavigate, getPendingMedicines })
         showBubbleWithContent('您当前没有待服用的药品，继续保持哦~', 5000);
       } else {
         const lines = pending.map((item) => {
+          if (item?.message) return item.message;
           return `💊 ${item.name} 记得在 ${item.time} 服用`;
         });
         const text = '您还有待服药品：\n' + lines.join('\n');

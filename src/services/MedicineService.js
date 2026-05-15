@@ -924,7 +924,7 @@ export class MedicineService {
       .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt));
   }
 
-  static async markReminderTaken({ medicineId, reminderId, source = 'app' }) {
+  static async markReminderTaken({ medicineId, reminderId, source = 'app', contextNote = '' }) {
     const remindersByMedicine = (await SecureStorage.getItem(REMINDERS_KEY)) || {};
     const list = Array.isArray(remindersByMedicine[medicineId]) ? remindersByMedicine[medicineId] : [];
     const idx = list.findIndex((r) => r.id === reminderId);
@@ -949,14 +949,59 @@ export class MedicineService {
     };
     remindersByMedicine[medicineId] = list;
     await SecureStorage.setItem(REMINDERS_KEY, remindersByMedicine);
+    const medicines = await this.getAllMedicines();
+    const med = medicines.find((m) => m.id === medicineId);
     await this.appendIntakeLog({
       medicineId,
       reminderId,
+      medicineName: med?.name || '',
       action: 'taken',
       at: new Date().toISOString(),
       scheduledAt: reminder.scheduledAt,
       source,
+      contextNote: String(contextNote || ''),
     });
+    return true;
+  }
+
+  /**
+   * 间隔提醒场景：用户“服用”后，将间隔起点重置为当前时间，
+   * 并写入一条服用日志，保证首页/药品页倒计时同步刷新。
+   */
+  static async recordIntervalDoseNow({ medicineId, source = 'app', contextNote = '' }) {
+    const medicines = await this.getAllMedicines();
+    const med = medicines.find((m) => m.id === medicineId);
+    if (!med) throw new Error('药品不存在');
+    const cfg = med?.reminderConfig || {};
+    const mode = String(cfg.mode || '');
+    if (mode !== 'interval_hours') {
+      throw new Error('当前药品不是“间隔”提醒模式');
+    }
+
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const nowHHMM = `${hh}:${mm}`;
+    const nowIso = now.toISOString();
+
+    await this.appendIntakeLog({
+      medicineId,
+      reminderId: `interval_${medicineId}_${nowIso}`,
+      medicineName: med.name || '',
+      action: 'taken',
+      at: nowIso,
+      scheduledAt: nowIso,
+      source,
+      contextNote: String(contextNote || ''),
+    });
+
+    await this.updateReminderConfig(medicineId, {
+      mode: 'interval_hours',
+      intervalStartTime: nowHHMM,
+      enabled: true,
+      paused: false,
+    });
+
     return true;
   }
 

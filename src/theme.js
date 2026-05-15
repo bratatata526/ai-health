@@ -33,7 +33,7 @@ const paperFonts = configureFonts({
 export const theme = {
   ...MD3LightTheme,
   fonts: paperFonts,
-  roundness: 8,
+  roundness: 12,
   colors: {
     ...MD3LightTheme.colors,
 
@@ -43,9 +43,9 @@ export const theme = {
     accent: '#A855F7',
 
     // Surfaces
-    background: '#F6F7FB',
+    background: '#F7F9FC',
     surface: '#FFFFFF',
-    surfaceVariant: '#F1F5F9',
+    surfaceVariant: '#F4F7FB',
 
     // Text
     text: '#0F172A',
@@ -57,8 +57,8 @@ export const theme = {
     success: '#22C55E',
 
     // Borders
-    outline: '#CBD5E1',
-    outlineVariant: '#E2E8F0',
+    outline: '#C9D5E5',
+    outlineVariant: '#E5ECF5',
 
     // 确保 elevation 配置完整（部分组件依赖）
     elevation: {
@@ -82,15 +82,15 @@ export const theme = {
     xxl: 40,
   },
   borderRadius: {
-    sm: 4,
-    md: 8,
-    lg: 12,
-    xl: 16,
+    sm: 6,
+    md: 10,
+    lg: 14,
+    xl: 20,
   },
   shadow: {
     // iOS shadow + Android elevation（按需在各 Screen 使用）
-    color: 'rgba(15, 23, 42, 0.08)',
-    colorStrong: 'rgba(15, 23, 42, 0.12)',
+    color: 'rgba(15, 23, 42, 0.06)',
+    colorStrong: 'rgba(15, 23, 42, 0.1)',
   },
 };
 
