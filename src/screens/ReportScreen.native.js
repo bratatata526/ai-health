@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useFocusEffect, useRoute, useNavigation } from '@react-navigation/native';
 import {
   View,
   StyleSheet,
@@ -24,6 +24,7 @@ import { theme, textStyles } from '../theme';
 import { ReportService } from '../services/ReportService';
 import { ExportService } from '../services/ExportService';
 import { AuthService } from '../services/AuthService';
+import { CareAccountService } from '../services/CareAccountService';
 import { PersonalizedAdviceCache } from '../services/PersonalizedAdviceCache';
 import { AI_DISCLAIMER_ZH } from '../constants/aiDisclaimer';
 import { Alert } from 'react-native';
@@ -32,21 +33,29 @@ import { sanitizeHealthAdviceText } from '../utils/sanitizeAiOutput';
 const { width } = Dimensions.get('window');
 
 export default function ReportScreen() {
+  const route = useRoute();
+  const navigation = useNavigation();
+  const careUserId = route.params?.careUserId ?? null;
+  const careDisplayName = route.params?.careDisplayName ?? '';
+
   const [reportType, setReportType] = useState('week');
   const [report, setReport] = useState(null);
+  const reportRef = useRef(null);
   const [loading, setLoading] = useState(false);
+  const [refreshingReport, setRefreshingReport] = useState(false);
   const [generatingAdvice, setGeneratingAdvice] = useState(false);
   const [profile, setProfile] = useState(null);
   const [assistantAdvice, setAssistantAdvice] = useState('');
 
   const refreshAssistantAdvice = useCallback(async () => {
     try {
-      const c = await PersonalizedAdviceCache.get();
+      const scope = reportType === 'month' ? 'month' : 'week';
+      const c = await PersonalizedAdviceCache.get(scope);
       setAssistantAdvice(c?.text || '');
     } catch {
       setAssistantAdvice('');
     }
-  }, []);
+  }, [reportType]);
 
   useEffect(() => {
     (async () => {
@@ -59,30 +68,85 @@ export default function ReportScreen() {
     })();
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      refreshAssistantAdvice();
-    }, [refreshAssistantAdvice])
-  );
+  useEffect(() => {
+    const rt = route.params?.reportTypeForCare;
+    if ((rt === 'week' || rt === 'month') && careUserId) {
+      setReportType(rt);
+    }
+  }, [route.params?.reportTypeForCare, careUserId]);
+
+  useEffect(() => {
+    reportRef.current = report;
+  }, [report]);
 
   const loadReport = useCallback(async () => {
-    setLoading(true);
+    const initialLoad = reportRef.current == null;
+    if (initialLoad) setLoading(true);
+    else setRefreshingReport(true);
     try {
-      const data = await ReportService.generateReport(reportType, false);
-      setReport(data);
-      await refreshAssistantAdvice();
+      if (careUserId) {
+        const accounts = await CareAccountService.listCareAccounts();
+        let acc = accounts.find((a) => a.userId === careUserId);
+        if (!acc) {
+          acc = await CareAccountService.resolveCareLinkedAccountByUserId(careUserId);
+        }
+        if (!acc || !acc.token) {
+          Alert.alert(
+            '提示',
+            '无法使用关怀数据：未找到该关怀账号，或当前登录已覆盖添加关怀时的账号。请在添加关怀的账号下打开，或使用两台设备分别登录。',
+          );
+          navigation.setParams({
+            careUserId: undefined,
+            careDisplayName: undefined,
+            reportTypeForCare: undefined,
+          });
+          const data = await ReportService.generateReport(reportType, false);
+          setReport(data);
+          await refreshAssistantAdvice();
+          return;
+        }
+        const bundle = await CareAccountService.fetchCareRecipientDataset(acc);
+        if (!bundle) {
+          Alert.alert('提示', '无法读取对方云端数据，请确认网络与对方已同步');
+          setReport(null);
+          return;
+        }
+        const data = await ReportService.generateReportFromCareSnapshot(reportType, bundle);
+        setReport(data);
+        setAssistantAdvice('');
+      } else {
+        const data = await ReportService.generateReport(reportType, false);
+        setReport(data);
+        await refreshAssistantAdvice();
+      }
     } catch (error) {
       console.error('加载报告失败:', error);
       Alert.alert('错误', '生成报告失败，请重试');
     } finally {
-      setLoading(false);
+      if (initialLoad) setLoading(false);
+      else setRefreshingReport(false);
     }
-  }, [reportType, refreshAssistantAdvice]);
+  }, [reportType, refreshAssistantAdvice, careUserId, navigation]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (careUserId) {
+        setAssistantAdvice('');
+        loadReport();
+      } else {
+        refreshAssistantAdvice();
+      }
+    }, [refreshAssistantAdvice, careUserId, loadReport])
+  );
 
   const generateAdvice = async () => {
+    if (careUserId || report?.careMode) {
+      Alert.alert('提示', '关怀账号报告不支持生成 AI 个性化建议');
+      return;
+    }
     try {
       setGeneratingAdvice(true);
-      const text = await ExportService.ensurePersonalizedAdvice();
+      const text = await ExportService.ensurePersonalizedAdvice(reportType, { forceRefresh: true });
       if (text) {
         setAssistantAdvice(text);
         Alert.alert('成功', '个性化健康建议已生成');
@@ -281,7 +345,9 @@ export default function ReportScreen() {
           <Ionicons name="document-text-outline" size={64} color={theme.colors.textSecondary} />
           <Title style={styles.emptyTitle}>暂无报告数据</Title>
           <Paragraph style={styles.emptyText}>
-            请先连接设备并收集健康数据
+            {careUserId
+              ? '无法生成关怀账号报告或暂无对方云端数据，请确认对方已同步上传。'
+              : '请先连接设备并收集健康数据'}
           </Paragraph>
         </View>
       </View>
@@ -291,6 +357,34 @@ export default function ReportScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
+        {refreshingReport ? (
+          <View style={styles.refreshBanner} accessibilityLiveRegion="polite">
+            <ActivityIndicator animating />
+            <Text style={styles.refreshBannerText}>正在切换报告...</Text>
+          </View>
+        ) : null}
+        {report?.careMode ? (
+          <Card style={styles.card}>
+            <Card.Content>
+              <Paragraph style={{ marginBottom: 10 }}>
+                {`正在查看关怀账号「${report?.careRecipientDisplay || careDisplayName || '对方'}」的健康报告（数据来自对方云快照）。`}
+              </Paragraph>
+              <Button
+                mode="outlined"
+                compact
+                onPress={() =>
+                  navigation.setParams({
+                    careUserId: undefined,
+                    careDisplayName: undefined,
+                    reportTypeForCare: undefined,
+                  })
+                }
+              >
+                返回本人报告
+              </Button>
+            </Card.Content>
+          </Card>
+        ) : null}
         {/* 报告类型选择 */}
         <Card style={styles.card}>
           <Card.Content>
@@ -303,8 +397,9 @@ export default function ReportScreen() {
               ]}
             />
             <Paragraph style={styles.userMeta}>
-              用户：
-              {profile?.name || profile?.email || '未登录 / 本地用户'}
+              {report?.careMode
+                ? `关怀对象：${report?.careRecipientDisplay || careDisplayName || '对方'}`
+                : `用户：${profile?.name || profile?.email || '未登录 / 本地用户'}`}
             </Paragraph>
           </Card.Content>
         </Card>
@@ -368,7 +463,7 @@ export default function ReportScreen() {
 
         {/* 趋势分析 */}
         {report.trends && (
-          <>
+          <React.Fragment key={`trends-${reportType}-${report.generatedAt || ''}`}>
             <Card style={styles.card}>
               <Card.Content>
                 <Title style={styles.sectionTitle}>心率趋势</Title>
@@ -453,7 +548,7 @@ export default function ReportScreen() {
                 })}
               </Card.Content>
             </Card>
-          </>
+          </React.Fragment>
         )}
 
         {/* 健康建议 / 规则简要提示（与 PDF 逻辑一致） */}
@@ -461,22 +556,24 @@ export default function ReportScreen() {
           <Card.Content>
             <View style={styles.adviceHeader}>
               <Title style={styles.sectionTitle}>
-                {assistantAdvice.trim().length > 0
+                {assistantAdvice.trim().length > 0 && !report?.careMode
                   ? '健康建议（AI 助手个性化建议）'
                   : '简要提示（规则引擎）'}
               </Title>
-              <Button
-                mode="outlined"
-                compact
-                onPress={generateAdvice}
-                loading={generatingAdvice}
-                disabled={generatingAdvice}
-                style={styles.generateAdviceButton}
-              >
-                生成建议
-              </Button>
+              {!report?.careMode ? (
+                <Button
+                  mode="outlined"
+                  compact
+                  onPress={generateAdvice}
+                  loading={generatingAdvice}
+                  disabled={generatingAdvice}
+                  style={styles.generateAdviceButton}
+                >
+                  生成建议
+                </Button>
+              ) : null}
             </View>
-            {normalizedAssistantAdvice.length > 0 ? (
+            {normalizedAssistantAdvice.length > 0 && !report?.careMode ? (
               <>
                 <Text style={styles.aiDisclaimer}>{AI_DISCLAIMER_ZH}</Text>
                 {renderAdviceText()}
@@ -484,7 +581,9 @@ export default function ReportScreen() {
             ) : (
               <>
                 <Paragraph style={styles.adviceHint}>
-                  尚未在「AI 助手 › 建议」中生成个性化建议；以下为应用规则生成的简要提示。
+                  {report?.careMode
+                    ? '以下为基于对方快照的规则简要提示。请确认在当前登录账号下添加了关怀绑定；对方未同步体征快照时会显示为 0。'
+                    : '尚未在「AI 助手 › 建议」中生成个性化建议；以下为应用规则生成的简要提示。'}
                 </Paragraph>
                 {report.recommendations.map((rec, index) => (
                   <View key={index} style={styles.recommendationItem}>
@@ -556,6 +655,23 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: theme.spacing.md,
+  },
+  refreshBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: theme.spacing.sm,
+    marginBottom: theme.spacing.sm,
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surfaceVariant,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
+  },
+  refreshBannerText: {
+    ...textStyles.body,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
   },
   loadingContainer: {
     flex: 1,

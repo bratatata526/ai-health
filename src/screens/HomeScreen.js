@@ -53,14 +53,20 @@ export default function HomeScreen({ navigation, onLogout }) {
 
   const logout = async () => {
     try {
-      await AuthService.logout();
+      const hadSession = await AuthService.isLoggedIn();
+      const { cloudSaved } = await AuthService.logout();
       // 立即通知 App.js 更新状态，触发跳转到登录页
       if (onLogout) {
         onLogout();
       }
       // 延迟显示提示，避免阻塞跳转动画
       setTimeout(() => {
-        Alert.alert('已退出', '已成功退出登录');
+        Alert.alert(
+          '已退出',
+          hadSession && !cloudSaved
+            ? '已成功退出登录。提示：退出前未能将数据上传到云端（请确认已运行 npm run cloud 且网络正常）。下次登录将按云端还原；若云端从未有过备份，本次在本机新增的身高、体征会丢失。'
+            : '已成功退出登录',
+        );
       }, 300);
     } catch (e) {
       Alert.alert('退出失败', e.message || '退出登录时发生错误');
@@ -167,7 +173,7 @@ export default function HomeScreen({ navigation, onLogout }) {
           onPress={() => navigation.navigate('报告')}
           style={styles.tipCard}
         >
-          <Ionicons name="sparkles" size={20} color="#7C3AED" />
+          <Ionicons name="color-wand-outline" size={20} color="#7C3AED" />
           <View style={{ flex: 1, marginLeft: theme.spacing.sm }}>
             <Text style={styles.tipTitle}>AI 智能建议</Text>
             <Text style={styles.tipDesc} numberOfLines={1}>查看个性化健康洞察与趋势分析</Text>

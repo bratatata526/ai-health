@@ -622,6 +622,29 @@ export class MedicineService {
     }
   }
 
+  /** 云同步或关怀账号下发药品后：若缺少未来提醒行则按 reminderConfig 补齐 */
+  static async fillMissingReminderSchedules() {
+    const medicines = await this.getAllMedicines();
+    const remindersByMedicine = (await SecureStorage.getItem(REMINDERS_KEY)) || {};
+    const nowMs = Date.now();
+    const horizonMs = nowMs + 24 * 3600000 * 45;
+    for (const m of medicines) {
+      const cfg = normalizeReminderConfig(m);
+      if (!cfg.enabled || cfg.paused || cfg.prn || cfg.mode === 'prn') continue;
+
+      const list = Array.isArray(remindersByMedicine[m.id]) ? remindersByMedicine[m.id] : [];
+      const hasUpcoming = list.some((r) => {
+        if (!r?.scheduledAt || (r.status !== 'scheduled' && r.status !== 'snoozed')) return false;
+        const t = new Date(r.scheduledAt).getTime();
+        return Number.isFinite(t) && t >= nowMs && t <= horizonMs;
+      });
+      if (!hasUpcoming) {
+        await this.cancelReminders(m.id);
+        await this.scheduleReminders(m);
+      }
+    }
+  }
+
   // ====== 库存/到期/复购（基础能力：存字段 + 简单提醒通知）======
 
   static async updateStockConfig(medicineId, stockPatch) {

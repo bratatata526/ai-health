@@ -37,6 +37,8 @@ import { DrugInteractionCheckCard } from '../components/DrugInteractionCheckCard
 import { theme, textStyles } from '../theme';
 import { MedicineService } from '../services/MedicineService';
 import { ExportService } from '../services/ExportService';
+import { AuthService } from '../services/AuthService';
+import { CareAccountService } from '../services/CareAccountService';
 import { validateMedicineName, validateTimesText, validateDateRange, parseHHMM } from '../utils/validation';
 
 const { width } = Dimensions.get('window');
@@ -103,6 +105,12 @@ export default function MedicineScreen() {
   // 新：漏服补服指导
   const [guidanceVisible, setGuidanceVisible] = useState(false);
   const [guidanceText, setGuidanceText] = useState('');
+
+  const [carePushVisible, setCarePushVisible] = useState(false);
+  const [careMedicineTarget, setCareMedicineTarget] = useState(null);
+  const [careAccountsPick, setCareAccountsPick] = useState([]);
+  const [selectedCareUserId, setSelectedCareUserId] = useState(null);
+  const [carePushLoading, setCarePushLoading] = useState(false);
 
   useEffect(() => {
     loadMedicines();
@@ -187,6 +195,11 @@ export default function MedicineScreen() {
   };
 
   const loadMedicines = async () => {
+    try {
+      await MedicineService.fillMissingReminderSchedules();
+    } catch (e) {
+      console.warn('补全提醒日程失败:', e?.message || e);
+    }
     const data = await MedicineService.getAllMedicines();
     setMedicines(data);
     // 同步加载“今日提醒”
@@ -240,6 +253,51 @@ export default function MedicineScreen() {
         { text: '30分钟', onPress: () => MedicineService.snoozeReminderMinutes({ medicineId, reminderId, minutes: 30 }).then(refreshTodayReminders) },
       ]
     );
+  };
+
+  const openCarePushForMedicine = async (medicine) => {
+    try {
+      const list = await CareAccountService.listCareAccounts();
+      if (!list.length) {
+        Alert.alert(
+          '暂无关怀账号',
+          '请在「首页 › 左上角头像 › 账号与云同步」中点击「添加关怀账号」，填写对方的邮箱与密码完成关联。',
+        );
+        return;
+      }
+      setCareMedicineTarget(medicine);
+      setCareAccountsPick(list);
+      setSelectedCareUserId(list[0].userId);
+      setCarePushVisible(true);
+    } catch (e) {
+      Alert.alert('失败', e?.message || '无法读取关怀账号');
+    }
+  };
+
+  const confirmCareMedicinePush = async () => {
+    if (!careMedicineTarget || !selectedCareUserId) return;
+    const acc = careAccountsPick.find((a) => a.userId === selectedCareUserId);
+    if (!acc) return;
+    const medName = careMedicineTarget.name;
+    setCarePushLoading(true);
+    try {
+      const caregiver = await AuthService.getProfile();
+      await CareAccountService.mergeMedicineTemplateIntoCareCloud(
+        acc,
+        careMedicineTarget,
+        caregiver?.email || '',
+      );
+      setCarePushVisible(false);
+      setCareMedicineTarget(null);
+      Alert.alert(
+        '已同步',
+        `已将「${medName}」的用药模板写入 ${acc.name} 的云端。请对方在本人设备登录并同步云端数据，稍后在药品页即可看到并收到提醒。`,
+      );
+    } catch (e) {
+      Alert.alert('同步失败', e?.message || '请稍后重试');
+    } finally {
+      setCarePushLoading(false);
+    }
   };
 
   const openReminderSettings = (medicine) => {
@@ -1105,7 +1163,7 @@ export default function MedicineScreen() {
                     <Image
                       source={{ uri: images[0] }}
                       style={styles.medicineImage}
-                      resizeMode="cover"
+                      resizeMode="contain"
                     />
                     {images.length > 1 && (
                       <View style={styles.imageCountBadge}>
@@ -1114,36 +1172,45 @@ export default function MedicineScreen() {
                     )}
                   </View>
                 )}
-                <Card.Content>
-                  <View style={styles.medicineHeader}>
-                    <Title style={styles.medicineName}>{medicine.name}</Title>
-                    <View style={styles.medicineActions}>
+                <Card.Content style={styles.medicineInfoSection}>
+                  <View style={styles.infoArea}>
+                    <View style={styles.medicineHeader}>
+                      <Title style={styles.medicineName}>{medicine.name}</Title>
+                      <View style={styles.medicineActions}>
+                      <TouchableOpacity
+                        onPress={() => openCarePushForMedicine(medicine)}
+                        style={styles.actionButton}
+                        accessibilityLabel="关怀同步"
+                      >
+                        <Ionicons name="heart-outline" size={24} color={theme.colors.secondary} />
+                      </TouchableOpacity>
                       <TouchableOpacity 
                         onPress={() => editMedicine(medicine)}
                         style={styles.actionButton}
                       >
-                        <Ionicons name="create-outline" size={24} color={theme.colors.primary} />
-                      </TouchableOpacity>
-                      <TouchableOpacity 
-                        onPress={() => deleteMedicine(medicine.id)}
-                        style={styles.actionButton}
-                      >
-                        <Ionicons name="trash-outline" size={24} color={theme.colors.error} />
-                      </TouchableOpacity>
+                          <Ionicons name="create-outline" size={24} color={theme.colors.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          onPress={() => deleteMedicine(medicine.id)}
+                          style={styles.actionButton}
+                        >
+                          <Ionicons name="trash-outline" size={24} color={theme.colors.error} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
-                  </View>
-                  {images.length > 1 && (
-                    <Chip icon="images" style={styles.chip}>
-                      {images.length} 张图片
-                    </Chip>
-                  )}
-                  <View style={styles.medicineInfo}>
-                    <Chip icon="flask" style={styles.chip}>
-                      {getDisplayDose(medicine)}
-                    </Chip>
-                    <View style={styles.chipWithCustomIcon}>
-                      {getReminderIcon(medicine)}
-                      <Text style={styles.chipText}>{getDisplayFrequency(medicine)}</Text>
+                    {images.length > 1 && (
+                      <Chip icon="images" style={styles.chip}>
+                        {images.length} 张图片
+                      </Chip>
+                    )}
+                    <View style={styles.medicineInfo}>
+                      <Chip icon="flask" style={styles.chip}>
+                        {getDisplayDose(medicine)}
+                      </Chip>
+                      <View style={styles.chipWithCustomIcon}>
+                        {getReminderIcon(medicine)}
+                        <Text style={styles.chipText}>{getDisplayFrequency(medicine)}</Text>
+                      </View>
                     </View>
                   </View>
 
@@ -1214,23 +1281,25 @@ export default function MedicineScreen() {
                     )}
                   </View>
 
-                  <View style={styles.reminderFooterActions}>
-                    <Button mode="text" onPress={() => openReminderSettings(medicine)}>
-                      提醒设置
-                    </Button>
-                    <Button mode="text" onPress={() => openStats(medicine)}>
-                      统计
-                    </Button>
-                    <Button mode="text" onPress={() => openHistory(medicine)}>
-                      历史
-                    </Button>
-                    <Button mode="text" onPress={() => openStockDialog(medicine)}>
-                      库存
-                    </Button>
+                  <View style={styles.actionArea}>
+                    <View style={styles.reminderFooterActions}>
+                      <Button mode="text" onPress={() => openReminderSettings(medicine)}>
+                        提醒设置
+                      </Button>
+                      <Button mode="text" onPress={() => openStats(medicine)}>
+                        统计
+                      </Button>
+                      <Button mode="text" onPress={() => openHistory(medicine)}>
+                        历史
+                      </Button>
+                      <Button mode="text" onPress={() => openStockDialog(medicine)}>
+                        库存
+                      </Button>
+                    </View>
+                    <Paragraph style={styles.medicineDate}>
+                      添加时间: {new Date(medicine.createdAt).toLocaleDateString('zh-CN')}
+                    </Paragraph>
                   </View>
-                  <Paragraph style={styles.medicineDate}>
-                    添加时间: {new Date(medicine.createdAt).toLocaleDateString('zh-CN')}
-                  </Paragraph>
                 </Card.Content>
               </Card>
               </View>
@@ -1903,6 +1972,37 @@ export default function MedicineScreen() {
             <Button onPress={() => setGuidanceVisible(false)}>关闭</Button>
           </Dialog.Actions>
         </Dialog>
+
+        <Dialog visible={carePushVisible} onDismiss={() => !carePushLoading && setCarePushVisible(false)}>
+          <Dialog.Title>同步到关怀账号</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph style={{ marginBottom: theme.spacing.sm }}>
+              将「{careMedicineTarget?.name || '—'}」的名称、剂量与提醒规则合并到对方云端快照。药盒图片不会上传；对方需在自己手机同步云端后即可看到并按规则生成服药提醒。
+            </Paragraph>
+            <Text style={[textStyles.semi, { marginBottom: 6 }]}>选择关怀对象</Text>
+            <ScrollView style={{ maxHeight: 220 }}>
+              {careAccountsPick.map((a) => (
+                <Button
+                  key={a.userId}
+                  mode={selectedCareUserId === a.userId ? 'contained' : 'outlined'}
+                  onPress={() => setSelectedCareUserId(a.userId)}
+                  style={{ marginBottom: 8 }}
+                  compact={false}
+                >
+                  {a.name} · {a.email}
+                </Button>
+              ))}
+            </ScrollView>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => !carePushLoading && setCarePushVisible(false)} disabled={carePushLoading}>
+              取消
+            </Button>
+            <Button mode="contained" loading={carePushLoading} onPress={confirmCareMedicinePush}>
+              确认同步
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
       </Portal>
     </View>
   );
@@ -1950,45 +2050,65 @@ const styles = StyleSheet.create({
   medicineCard: {
     marginBottom: theme.spacing.md,
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: '#F6F9FE',
     borderWidth: 1,
-    borderColor: theme.colors.outlineVariant,
+    borderColor: '#BFD2EA',
     overflow: 'hidden',
     ...Platform.select({
       ios: {
         shadowColor: theme.shadow.color,
-        shadowOpacity: 1,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 3 },
       },
       android: { elevation: 2 },
       web: {
         shadowColor: theme.shadow.color,
-        shadowOpacity: 1,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 4 },
       },
     }),
   },
   imageScrollView: {
     width: '100%',
-    height: 200,
+    height: 198,
     position: 'relative',
     overflow: 'hidden',
+    backgroundColor: '#EFF4FA',
+    borderBottomWidth: 1,
+    borderBottomColor: '#D8E2EE',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   medicineImage: {
     width: '100%',
-    height: 200,
-    resizeMode: 'cover',
+    height: 172,
+    resizeMode: 'contain',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+  },
+  medicineInfoSection: {
+    paddingTop: 0,
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+  },
+  infoArea: {
+    backgroundColor: '#F6F9FE',
+    paddingHorizontal: theme.spacing.md,
+    paddingTop: theme.spacing.md,
+    paddingBottom: theme.spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#DCE6F2',
   },
   imageCountBadge: {
     position: 'absolute',
-    right: 8,
-    bottom: 8,
+    right: 12,
+    bottom: 10,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(19, 33, 54, 0.6)',
   },
   imageCountBadgeText: {
     color: '#fff',
@@ -2011,7 +2131,11 @@ const styles = StyleSheet.create({
     gap: theme.spacing.sm,
   },
   actionButton: {
-    padding: theme.spacing.xs,
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#DCE6F2',
   },
   medicineInfo: {
     flexDirection: 'row',
@@ -2025,7 +2149,7 @@ const styles = StyleSheet.create({
   chipWithCustomIcon: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.surfaceVariant,
+    backgroundColor: '#EEF3FA',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 16,
@@ -2044,10 +2168,12 @@ const styles = StyleSheet.create({
   remindersContainer: {
     marginTop: theme.spacing.md,
     padding: theme.spacing.sm,
-    backgroundColor: theme.colors.surfaceVariant,
+    backgroundColor: '#F6F9FE',
     borderRadius: theme.borderRadius.sm,
     borderWidth: 1,
-    borderColor: theme.colors.outlineVariant,
+    borderColor: '#D3E0F0',
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
   },
   remindersTitle: {
     ...textStyles.emphasis,
@@ -2089,8 +2215,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-start',
     flexWrap: 'wrap',
-    gap: theme.spacing.sm,
-    marginTop: theme.spacing.xs,
+    gap: theme.spacing.md,
+    marginTop: 0,
+  },
+  actionArea: {
+    backgroundColor: '#F6F9FE',
+    borderTopWidth: 1,
+    borderTopColor: '#DCE6F2',
+    paddingHorizontal: theme.spacing.md,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.md,
   },
   switchRow: {
     flexDirection: 'row',

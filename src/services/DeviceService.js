@@ -6,7 +6,8 @@ const HEALTH_DATA_KEY = '@health_data';
 function normalizeHeartRatePoint(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const value = Number(raw.value);
-  const ts = raw.date ? new Date(raw.date).getTime() : NaN;
+  const iso = pickRecordDateIso(raw);
+  const ts = iso ? new Date(iso).getTime() : NaN;
   if (!Number.isFinite(value) || !Number.isFinite(ts)) return null;
   return { date: new Date(ts).toISOString(), value };
 }
@@ -35,8 +36,9 @@ function buildMinuteAverageSeries(heartRateSeries) {
 
 function migrateSleepEntry(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  const date = raw.date;
-  if (!date) return null;
+  const iso = pickRecordDateIso(raw);
+  if (!iso) return null;
+  const date = iso;
   let total = raw.totalHours != null ? Number(raw.totalHours) : NaN;
   if (!Number.isFinite(total)) total = Number(raw.value);
   if (!Number.isFinite(total)) total = 0;
@@ -68,17 +70,100 @@ function migrateSleepEntry(raw) {
   };
 }
 
+/** 从体征点中取统一 ISO 日期（快照/三方格式常见多种键名） */
+function pickRecordDateIso(item) {
+  if (!item || typeof item !== 'object') return null;
+  const keys = [
+    'date',
+    'measuredAt',
+    'recordedAt',
+    'timestamp',
+    'time',
+    'createdAt',
+    'at',
+    'startDate',
+    'endDate',
+    'samplesAt',
+    'SamplingTime',
+  ];
+  for (let i = 0; i < keys.length; i += 1) {
+    const v = item[keys[i]];
+    if (v == null || v === '') continue;
+    const iso = coerceToIso(v);
+    if (iso) return iso;
+  }
+  return null;
+}
+
+/** 云端/快照时间戳可能是数字（秒或毫秒）、可解析字符串等；转成 ISO，否则易被「最近一周」筛成空集 */
+function coerceToIso(dateLike) {
+  if (dateLike == null) return null;
+  if (typeof dateLike === 'number' && Number.isFinite(dateLike)) {
+    const ms =
+      Math.abs(dateLike) < 1e12 ? Math.round(dateLike * 1000) : Math.round(dateLike);
+    const dt = new Date(ms);
+    return Number.isFinite(dt.getTime()) ? dt.toISOString() : null;
+  }
+  if (typeof dateLike === 'string') {
+    const t = Date.parse(dateLike);
+    if (Number.isFinite(t)) return new Date(t).toISOString();
+  }
+  if (typeof dateLike === 'object' && dateLike !== null) {
+    const sec =
+      typeof dateLike.seconds === 'number'
+        ? dateLike.seconds
+        : typeof dateLike._seconds === 'number'
+          ? dateLike._seconds
+          : NaN;
+    if (Number.isFinite(sec)) {
+      const dt = new Date(Math.round(sec * 1000));
+      return Number.isFinite(dt.getTime()) ? dt.toISOString() : null;
+    }
+  }
+  return null;
+}
+
+function coerceSeriesDates(items, dateKey = 'date') {
+  return (items || [])
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const iso = pickRecordDateIso(item) ?? coerceToIso(item[dateKey]);
+      if (!iso) return null;
+      const out = { ...item, date: iso };
+      if (dateKey !== 'date') out[dateKey] = iso;
+      return out;
+    })
+    .filter(Boolean);
+}
+
+/** 将存储/云端快照中的健康原始对象规范为 Reports/Device 共用形状（补齐 sleep 字段与分钟心率聚合） */
 function migrateHealthPayload(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) {
     return { heartRate: [], heartRateMinuteAvg: [], bloodGlucose: [], sleep: [] };
   }
-  const heartRate = Array.isArray(data.heartRate) ? data.heartRate : [];
+  const heartRate = Array.isArray(data.heartRate)
+    ? data.heartRate
+    : Array.isArray(data.HeartRate)
+      ? data.HeartRate
+      : Array.isArray(data.heart_rate)
+        ? data.heart_rate
+        : [];
   const heartRateMinuteAvg =
     Array.isArray(data.heartRateMinuteAvg) && data.heartRateMinuteAvg.length > 0
       ? data.heartRateMinuteAvg
       : buildMinuteAverageSeries(heartRate);
-  const bloodGlucose = Array.isArray(data.bloodGlucose) ? data.bloodGlucose : [];
-  const sleepRaw = Array.isArray(data.sleep) ? data.sleep : [];
+  const bloodGlucose = Array.isArray(data.bloodGlucose)
+    ? data.bloodGlucose
+    : Array.isArray(data.BloodGlucose)
+      ? data.BloodGlucose
+      : Array.isArray(data.blood_glucose)
+        ? data.blood_glucose
+        : [];
+  const sleepRaw = Array.isArray(data.sleep)
+    ? data.sleep
+    : Array.isArray(data.Sleep)
+      ? data.Sleep
+      : [];
   const sleep = sleepRaw.map(migrateSleepEntry).filter(Boolean);
   return { heartRate, heartRateMinuteAvg, bloodGlucose, sleep };
 }
@@ -370,6 +455,32 @@ export class DeviceService {
       console.error('同步设备数据失败:', error);
       throw error;
     }
+  }
+
+  /**
+   * 关怀云端：`@health_data` 常为 JSON 或与本地等价结构；做 migrate + 时间字段归一后再参与报告聚合。
+   */
+  static normalizeHealthDataFromSnapshot(rawIn) {
+    let raw = rawIn;
+    if (typeof raw === 'string') {
+      try {
+        raw = JSON.parse(raw);
+      } catch {
+        raw = {};
+      }
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      raw = {};
+    }
+
+    const base = migrateHealthPayload(raw);
+    return {
+      ...base,
+      heartRate: coerceSeriesDates(base.heartRate, 'date'),
+      heartRateMinuteAvg: coerceSeriesDates(base.heartRateMinuteAvg, 'date'),
+      bloodGlucose: coerceSeriesDates(base.bloodGlucose, 'date'),
+      sleep: coerceSeriesDates(base.sleep, 'date'),
+    };
   }
 }
 

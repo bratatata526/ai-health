@@ -261,9 +261,9 @@ function extractMarkdownSection(markdown, headingCandidates) {
 }
 
 export class ReportService {
-  static async getLatestTongueAnalysis() {
+  /** 从快照/历史数组解析最新成功舌诊（与 getLatestTongueAnalysis 逻辑一致，不读本地存储） */
+  static parseTongueRowsToAnalysis(rows) {
     try {
-      const rows = (await SecureStorage.getItem('@tongue_analysis_history')) || [];
       if (!Array.isArray(rows) || rows.length === 0) return null;
       const latest = rows
         .filter((item) => item?.status === 'success' && item?.result)
@@ -290,9 +290,34 @@ export class ReportService {
         fullAnalysis: markdown,
       };
     } catch (e) {
+      console.warn('解析舌诊快照失败:', e);
+      return null;
+    }
+  }
+
+  static async getLatestTongueAnalysis() {
+    try {
+      const rows = (await SecureStorage.getItem('@tongue_analysis_history')) || [];
+      return this.parseTongueRowsToAnalysis(rows);
+    } catch (e) {
       console.warn('读取舌诊报告数据失败:', e);
       return null;
     }
+  }
+
+  /**
+   * 与 generateReport 相同的时间窗口起点：周=最近 7 天；月=最近一个自然月（与 setMonth(-1) 一致）
+   * @param {'week'|'month'} type
+   * @param {Date} [now]
+   */
+  static resolvePeriodStart(type = 'week', now = new Date()) {
+    const startDate = new Date(now);
+    if (type === 'week') {
+      startDate.setDate(startDate.getDate() - 7);
+    } else {
+      startDate.setMonth(startDate.getMonth() - 1);
+    }
+    return startDate;
   }
 
   static async generateReport(type = 'week', useAI = false) {
@@ -308,12 +333,7 @@ export class ReportService {
 
       // 计算时间范围
       const now = new Date();
-      const startDate = new Date(now);
-      if (type === 'week') {
-        startDate.setDate(startDate.getDate() - 7);
-      } else {
-        startDate.setMonth(startDate.getMonth() - 1);
-      }
+      const startDate = this.resolvePeriodStart(type, now);
 
       // 筛选时间范围内的数据
       const filteredHeartRate = healthData.heartRate.filter(
@@ -452,6 +472,204 @@ export class ReportService {
     }
   }
 
+  /**
+   * 基于关怀账号云端快照生成周/月报告（不读取本机 DeviceService / 本机舌诊存储）
+   * @param {'week'|'month'} type
+   * @param {{ healthData: object, medicines: any[], tongueRows: any[], profile: object }} bundle
+   */
+  static async generateReportFromCareSnapshot(type, bundle) {
+    const healthData = bundle?.healthData && typeof bundle.healthData === 'object' ? bundle.healthData : {};
+    const medicines = Array.isArray(bundle?.medicines) ? bundle.medicines : [];
+    const tongueRows = Array.isArray(bundle?.tongueRows) ? bundle.tongueRows : [];
+    const profile = bundle?.profile && typeof bundle.profile === 'object' ? bundle.profile : {};
+
+    const heartRate = Array.isArray(healthData.heartRate) ? healthData.heartRate : [];
+    const bloodGlucose = Array.isArray(healthData.bloodGlucose) ? healthData.bloodGlucose : [];
+    const sleep = Array.isArray(healthData.sleep) ? healthData.sleep : [];
+    const minuteHeartRate = Array.isArray(healthData.heartRateMinuteAvg)
+      ? healthData.heartRateMinuteAvg
+      : [];
+
+    const now = new Date();
+    const startDate = this.resolvePeriodStart(type, now);
+
+    const wallFilter = (item) =>
+      Number.isFinite(new Date(item.date).getTime()) && new Date(item.date) >= startDate;
+    let filteredHeartRate = heartRate.filter(wallFilter);
+    let filteredBloodGlucose = bloodGlucose.filter(wallFilter);
+    let filteredSleep = sleep.filter(wallFilter);
+
+    const anySeries =
+      (heartRate && heartRate.length > 0) ||
+      (bloodGlucose && bloodGlucose.length > 0) ||
+      (sleep && sleep.length > 0);
+    const hasWallHits =
+      filteredHeartRate.length + filteredBloodGlucose.length + filteredSleep.length > 0;
+
+    let chartEndAnchor = null;
+    let minuteInsightStart = startDate;
+    let careDataWindowNote = null;
+
+    if (anySeries && !hasWallHits) {
+      let latestTs = NaN;
+      [heartRate, bloodGlucose, sleep].forEach((arr) => {
+        (arr || []).forEach((item) => {
+          const t = new Date(item.date).getTime();
+          if (Number.isFinite(t)) latestTs = Number.isFinite(latestTs) ? Math.max(latestTs, t) : t;
+        });
+      });
+
+      if (Number.isFinite(latestTs)) {
+        const anchorEnd = new Date(latestTs);
+        anchorEnd.setHours(23, 59, 59, 999);
+        const days = type === 'week' ? 7 : 30;
+        const relStart = new Date(latestTs);
+        relStart.setHours(0, 0, 0, 0);
+        relStart.setDate(relStart.getDate() - (days - 1));
+        const relMs = relStart.getTime();
+        const endMs = anchorEnd.getTime();
+
+        const byWin = (arr) =>
+          (arr || []).filter((item) => {
+            const t = new Date(item.date).getTime();
+            return Number.isFinite(t) && t >= relMs && t <= endMs;
+          });
+
+        filteredHeartRate = byWin(heartRate);
+        filteredBloodGlucose = byWin(bloodGlucose);
+        filteredSleep = byWin(sleep);
+
+        if (
+          filteredHeartRate.length + filteredBloodGlucose.length + filteredSleep.length ===
+          0
+        ) {
+          filteredHeartRate = (heartRate || []).filter((item) =>
+            Number.isFinite(new Date(item.date).getTime())
+          );
+          filteredBloodGlucose = (bloodGlucose || []).filter((item) =>
+            Number.isFinite(new Date(item.date).getTime())
+          );
+          filteredSleep = (sleep || []).filter((item) =>
+            Number.isFinite(new Date(item.date).getTime())
+          );
+        }
+
+        chartEndAnchor = anchorEnd;
+        minuteInsightStart = relStart;
+        careDataWindowNote =
+          type === 'week'
+            ? '云端快照与「日历最近一周」无重叠：已按最近一次体征时间对齐展示近 7 日窗口（非自然周）。'
+            : '云端快照与「日历最近一月」无重叠：已按最近一次体征时间对齐展示近 30 日窗口（非自然月）。';
+      }
+    }
+
+    const avgHeartRate =
+      filteredHeartRate.length > 0
+        ? Math.round(
+            filteredHeartRate.reduce((sum, item) => sum + item.value, 0) / filteredHeartRate.length
+          )
+        : 0;
+
+    const avgBloodGlucose =
+      filteredBloodGlucose.length > 0
+        ? (
+            filteredBloodGlucose.reduce((sum, item) => sum + parseFloat(item.value), 0) /
+            filteredBloodGlucose.length
+          ).toFixed(1)
+        : 0;
+
+    const avgSleep =
+      filteredSleep.length > 0
+        ? (
+            filteredSleep.reduce(
+              (sum, item) =>
+                sum +
+                parseFloat(
+                  item.totalHours != null ? item.totalHours : item.value != null ? item.value : 0
+                ),
+              0
+            ) / filteredSleep.length
+          ).toFixed(1)
+        : 0;
+
+    const sleepStages = {
+      deep: this.avgSleepStageHours(filteredSleep, 'deepHours'),
+      light: this.avgSleepStageHours(filteredSleep, 'lightHours'),
+      rem: this.avgSleepStageHours(filteredSleep, 'remHours'),
+      awake: this.avgSleepStageHours(filteredSleep, 'awakeHours'),
+    };
+
+    const bodyMetrics = normalizeBodyMetrics({
+      heightCm: profile?.heightCm,
+      weightKg: profile?.weightKg,
+    });
+    const bmi = computeBmi(bodyMetrics.heightCm, bodyMetrics.weightKg)?.value ?? null;
+
+    const healthScore = this.calculateHealthScore({
+      heartRate: avgHeartRate,
+      bloodGlucose: parseFloat(avgBloodGlucose),
+      sleep: parseFloat(avgSleep),
+      medicineCount: medicines.length,
+    });
+
+    const trends = this.generateTrendData(
+      filteredHeartRate,
+      filteredBloodGlucose,
+      filteredSleep,
+      type,
+      chartEndAnchor && Number.isFinite(chartEndAnchor.getTime()) ? chartEndAnchor : null
+    );
+    const trendInsights = this.generateTrendInsights({
+      trends,
+      filteredHeartRate,
+      filteredBloodGlucose,
+      filteredSleep,
+      minuteHeartRate,
+      startDate,
+      minuteSeriesStart: minuteInsightStart,
+    });
+
+    const tongueAnalysis = this.parseTongueRowsToAnalysis(tongueRows);
+
+    let recommendations = this.generateRecommendations({
+      heartRate: avgHeartRate,
+      bloodGlucose: parseFloat(avgBloodGlucose),
+      sleep: parseFloat(avgSleep),
+      medicineCount: medicines.length,
+    });
+    if (careDataWindowNote) {
+      recommendations = [careDataWindowNote, ...recommendations];
+    }
+
+    const careRecipientDisplay =
+      String(profile?.name || '').trim() ||
+      String(profile?.email || '').trim() ||
+      '';
+
+    return {
+      type,
+      period: type === 'week' ? '最近一周' : '最近一月',
+      careMode: true,
+      careRecipientDisplay,
+      careDataWindowNote: careDataWindowNote || null,
+      heightCm: bodyMetrics.heightCm,
+      weightKg: bodyMetrics.weightKg,
+      bmi,
+      avgHeartRate,
+      avgBloodGlucose,
+      avgSleep,
+      sleepStages,
+      healthScore,
+      trends,
+      trendInsights,
+      tongueAnalysis,
+      recommendations,
+      aiAnalysis: null,
+      medicineCount: medicines.length,
+      generatedAt: now.toISOString(),
+    };
+  }
+
   static calculateHealthScore(data) {
     let score = 100;
 
@@ -493,7 +711,7 @@ export class ReportService {
     return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
   }
 
-  static generateTrendData(heartRate, bloodGlucose, sleep, type) {
+  static generateTrendData(heartRate, bloodGlucose, sleep, type, chartEndAnchor = null) {
     // 按日期分组数据
     const days = type === 'week' ? 7 : 30;
     const labels = [];
@@ -504,8 +722,13 @@ export class ReportService {
     const sleepLightData = [];
     const sleepRemData = [];
 
+    const endNorm =
+      chartEndAnchor instanceof Date && Number.isFinite(chartEndAnchor.getTime())
+        ? new Date(chartEndAnchor)
+        : new Date();
+
     for (let i = days - 1; i >= 0; i--) {
-      const date = new Date();
+      const date = new Date(endNorm);
       date.setDate(date.getDate() - i);
       const dateStr = `${date.getMonth() + 1}/${date.getDate()}`;
       labels.push(dateStr);
@@ -630,6 +853,7 @@ export class ReportService {
     filteredSleep,
     minuteHeartRate,
     startDate,
+    minuteSeriesStart,
   }) {
     const heartRateDay = trends?.heartRate?.datasets?.[0]?.data || [];
     const bloodGlucoseDay = trends?.bloodGlucose?.datasets?.[0]?.data || [];
@@ -646,9 +870,14 @@ export class ReportService {
     );
     const sleepInsight = buildTrendInsight('睡眠', '小时', sleepDay, 7, 9, 1);
 
+    const minuteFilterStart =
+      minuteSeriesStart instanceof Date && Number.isFinite(minuteSeriesStart.getTime())
+        ? minuteSeriesStart
+        : startDate;
+
     const minuteSeries = (minuteHeartRate || []).filter((item) => {
       const ts = new Date(item.date).getTime();
-      return Number.isFinite(ts) && ts >= startDate.getTime();
+      return Number.isFinite(ts) && ts >= minuteFilterStart.getTime();
     });
     const minuteValues = minuteSeries
       .map((item) => Number(item.value))

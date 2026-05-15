@@ -36,6 +36,8 @@ import { DrugInteractionCheckCard } from '../components/DrugInteractionCheckCard
 import { theme, textStyles } from '../theme';
 import { MedicineService } from '../services/MedicineService';
 import { ExportService } from '../services/ExportService';
+import { AuthService } from '../services/AuthService';
+import { CareAccountService } from '../services/CareAccountService';
 import { validateMedicineName, validateTimesText, validateDateRange, parseHHMM } from '../utils/validation';
 
 export default function MedicineScreen() {
@@ -100,6 +102,12 @@ export default function MedicineScreen() {
   // 新：漏服补服指导
   const [guidanceVisible, setGuidanceVisible] = useState(false);
   const [guidanceText, setGuidanceText] = useState('');
+
+  const [carePushVisible, setCarePushVisible] = useState(false);
+  const [careMedicineTarget, setCareMedicineTarget] = useState(null);
+  const [careAccountsPick, setCareAccountsPick] = useState([]);
+  const [selectedCareUserId, setSelectedCareUserId] = useState(null);
+  const [carePushLoading, setCarePushLoading] = useState(false);
 
   useEffect(() => {
     loadMedicines();
@@ -184,6 +192,11 @@ export default function MedicineScreen() {
   };
 
   const loadMedicines = async () => {
+    try {
+      await MedicineService.fillMissingReminderSchedules();
+    } catch (e) {
+      console.warn('补全提醒日程失败:', e?.message || e);
+    }
     const data = await MedicineService.getAllMedicines();
     setMedicines(data);
     // 同步加载“今日提醒”
@@ -237,6 +250,51 @@ export default function MedicineScreen() {
         { text: '30分钟', onPress: () => MedicineService.snoozeReminderMinutes({ medicineId, reminderId, minutes: 30 }).then(refreshTodayReminders) },
       ]
     );
+  };
+
+  const openCarePushForMedicine = async (medicine) => {
+    try {
+      const list = await CareAccountService.listCareAccounts();
+      if (!list.length) {
+        Alert.alert(
+          '暂无关怀账号',
+          '请在「首页 › 左上角头像 › 账号与云同步」中点击「添加关怀账号」，填写对方的邮箱与密码完成关联。',
+        );
+        return;
+      }
+      setCareMedicineTarget(medicine);
+      setCareAccountsPick(list);
+      setSelectedCareUserId(list[0].userId);
+      setCarePushVisible(true);
+    } catch (e) {
+      Alert.alert('失败', e?.message || '无法读取关怀账号');
+    }
+  };
+
+  const confirmCareMedicinePush = async () => {
+    if (!careMedicineTarget || !selectedCareUserId) return;
+    const acc = careAccountsPick.find((a) => a.userId === selectedCareUserId);
+    if (!acc) return;
+    const medName = careMedicineTarget.name;
+    setCarePushLoading(true);
+    try {
+      const caregiver = await AuthService.getProfile();
+      await CareAccountService.mergeMedicineTemplateIntoCareCloud(
+        acc,
+        careMedicineTarget,
+        caregiver?.email || '',
+      );
+      setCarePushVisible(false);
+      setCareMedicineTarget(null);
+      Alert.alert(
+        '已同步',
+        `已将「${medName}」的用药模板写入 ${acc.name} 的云端。请对方在本人设备登录并同步云端数据，稍后在药品页即可看到并收到提醒。`,
+      );
+    } catch (e) {
+      Alert.alert('同步失败', e?.message || '请稍后重试');
+    } finally {
+      setCarePushLoading(false);
+    }
   };
 
   const openReminderSettings = (medicine) => {
@@ -1115,6 +1173,13 @@ export default function MedicineScreen() {
                   <View style={styles.medicineHeader}>
                     <Title style={styles.medicineName}>{medicine.name}</Title>
                     <View style={styles.medicineActions}>
+                      <TouchableOpacity
+                        onPress={() => openCarePushForMedicine(medicine)}
+                        style={styles.actionButton}
+                        accessibilityLabel="关怀同步"
+                      >
+                        <Ionicons name="heart-outline" size={24} color={theme.colors.secondary} />
+                      </TouchableOpacity>
                       <TouchableOpacity 
                         onPress={() => editMedicine(medicine)}
                         style={styles.actionButton}
@@ -1898,6 +1963,37 @@ export default function MedicineScreen() {
             <Button onPress={() => setGuidanceVisible(false)}>关闭</Button>
           </Dialog.Actions>
         </Dialog>
+
+        <Dialog visible={carePushVisible} onDismiss={() => !carePushLoading && setCarePushVisible(false)}>
+          <Dialog.Title>同步到关怀账号</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph style={{ marginBottom: theme.spacing.sm }}>
+              将「{careMedicineTarget?.name || '—'}」的名称、剂量与提醒规则合并到对方云端快照。药盒图片不会上传；对方需在自己手机同步云端后即可看到并按规则生成服药提醒。
+            </Paragraph>
+            <Text style={[textStyles.semi, { marginBottom: 6 }]}>选择关怀对象</Text>
+            <ScrollView style={{ maxHeight: 220 }}>
+              {careAccountsPick.map((a) => (
+                <Button
+                  key={a.userId}
+                  mode={selectedCareUserId === a.userId ? 'contained' : 'outlined'}
+                  onPress={() => setSelectedCareUserId(a.userId)}
+                  style={{ marginBottom: 8 }}
+                  compact={false}
+                >
+                  {a.name} · {a.email}
+                </Button>
+              ))}
+            </ScrollView>
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => !carePushLoading && setCarePushVisible(false)} disabled={carePushLoading}>
+              取消
+            </Button>
+            <Button mode="contained" loading={carePushLoading} onPress={confirmCareMedicinePush}>
+              确认同步
+            </Button>
+          </Dialog.Actions>
+        </Dialog>
       </Portal>
     </View>
   );
@@ -1952,12 +2048,14 @@ const styles = StyleSheet.create({
     }),
   },
   imageScrollView: {
-    maxHeight: 200,
+    height: 220,
+    backgroundColor: theme.colors.surfaceVariant,
   },
   medicineImage: {
-    width: 400,
-    height: 200,
-    resizeMode: 'cover',
+    width: '100%',
+    height: 220,
+    resizeMode: 'contain',
+    backgroundColor: theme.colors.surfaceVariant,
   },
   medicineHeader: {
     flexDirection: 'row',

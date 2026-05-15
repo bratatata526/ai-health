@@ -513,11 +513,18 @@ ${medicineList}
 
   /**
    * 生成个性化健康建议
+   * @param {object} userData
+   * @param {{ periodLabel?: string }} [options]
    */
-  static async generatePersonalizedAdvice(userData) {
+  static async generatePersonalizedAdvice(userData, options = {}) {
     const tongueInsight = await this.getLatestTongueInsight();
     const summary = buildHealthAdviceSummary({ ...(userData || {}), tongueInsight });
-    const prompt = `下面是用户在本应用中产生的健康数据摘要（已做统计聚合；请勿编造未在摘要中出现的数值或怪异日期）。
+    const periodLabel =
+      typeof options?.periodLabel === 'string' ? options.periodLabel.trim() : '';
+    const periodHeader = periodLabel
+      ? `【统计周期】${periodLabel}。以下摘要仅包含该时段内的健康记录；请紧扣该时段分析与建议，不要将该时段外的历史数据当作依据。\n\n`
+      : '';
+    const prompt = `${periodHeader}下面是用户在本应用中产生的健康数据摘要（已做统计聚合；请勿编造未在摘要中出现的数值或怪异日期）。
 
 ${summary}
 
@@ -546,6 +553,11 @@ ${summary}
 - 禁止出现重复标点（例如“，，”“，。”）。
 - 禁止抄写或输出与本任务无关的应用界面文案（例如底部导航「首页」「药品」「设备」「报告」等）。
 - 数字格式规范：平均值等写「72.8」形式，禁止使用「72..8」或错乱小数点。
+- 百分比只写一遍：可使用「约占 26%」或「约占百分之二十六」，禁止「26%%%」「％％％」及在数字后堆砌多个百分号。
+- 睡眠分析中提及某一晚时请使用摘要里的「年月日」（如「2026年5月10日」），禁止写成「52:55日」「12:34日」等将时钟与「日」错误拼接的格式。
+- 时间格式统一使用「HH:mm」（例如「06:03」），禁止写成「6:3」「6:03」「6：03」等不规范写法。
+- 日期格式统一使用「YYYY年M月D日」或「M月D日」，禁止出现「52年5月1日」这类异常年份。
+- 严禁输出对话角色残片或提示词痕迹（如“user”“assistant”“system”“继续”），也不要输出孤立的编号行（如单独一行“1”）。
 - 每段首行请使用两个全角空格“　　”开头，分段自然，不要把整篇写成一段。
 - 不允许单独输出“风险提示”作为标题；风险提示必须并入“中医体质分析”小节。
 - 若某段难以续写应在自然收尾处停止，不可用无意义词句凑字数。

@@ -24,6 +24,99 @@ export function sanitizeHealthAdviceText(raw) {
   let s = raw.trim();
   if (!s) return '';
 
+  // 模型偶把「百分比」复述成 「2%%%」：压缩为单个 %
+  s = s.replace(/％/g, '%');
+  s = s.replace(/(\d+(?:\.\d+)?)\s*%+/g, '$1%');
+
+  // 统一中文全角冒号，便于后续时间规范化（6：3 / 6：03）
+  s = s.replace(/：/g, ':');
+  // 规范时间写法：H:MM 或 H:M -> HH:MM
+  s = s.replace(/\b(\d{1,2})\s*:\s*(\d{1,2})\b/g, (full, h, m) => {
+    const hh = Number(h);
+    const mm = Number(m);
+    if (
+      !Number.isFinite(hh) ||
+      !Number.isFinite(mm) ||
+      hh < 0 ||
+      hh > 23 ||
+      mm < 0 ||
+      mm > 59
+    ) {
+      return full;
+    }
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  });
+
+  // 修复异常中文日期：例如「52年5月1日」这类疑似拼接错误，降级为「5月1日」
+  s = s.replace(/(^|[^\d])(\d{1,3})年(\d{1,2})月(\d{1,2})日/g, (full, prefix, y, mo, d) => {
+    const yy = Number(y);
+    const mm = Number(mo);
+    const dd = Number(d);
+    if (
+      Number.isFinite(yy) &&
+      Number.isFinite(mm) &&
+      Number.isFinite(dd) &&
+      mm >= 1 &&
+      mm <= 12 &&
+      dd >= 1 &&
+      dd <= 31 &&
+      yy < 1900
+    ) {
+      return `${prefix}${mm}月${dd}日`;
+    }
+    return full;
+  });
+  // 重复「月月」常见于模型复读/串台，先折叠为单个「月」
+  s = s.replace(/月{2,}/g, '月');
+  // 形如「226年月15日」：年份明显异常且月份缺失，降级为「当前月15日」
+  s = s.replace(/(^|[^\d])(\d{1,3})年\s*月\s*(\d{1,2})日/g, (full, prefix, y, d) => {
+    const yy = Number(y);
+    const dd = Number(d);
+    const fallbackMonth = new Date().getMonth() + 1;
+    if (
+      Number.isFinite(yy) &&
+      Number.isFinite(dd) &&
+      yy < 1900 &&
+      dd >= 1 &&
+      dd <= 31
+    ) {
+      return `${prefix}${fallbackMonth}月${dd}日`;
+    }
+    return full;
+  });
+
+  // 「（52:55日）」「12:30日」等：非法「时:分+日」或不宜与「日」连用的时间串
+  s = s.replace(/（\s*(\d{1,2}):(\d{2})\s*日\s*）/g, (_, h, mi) => {
+    const hh = Number(h);
+    const mm = Number(mi);
+    if (
+      Number.isFinite(hh) &&
+      Number.isFinite(mm) &&
+      hh >= 0 &&
+      hh <= 23 &&
+      mm >= 0 &&
+      mm <= 59
+    ) {
+      return `（参考入眠时刻约 ${String(hh).padStart(2, '0')}:${String(mi).padStart(2, '0')}）`;
+    }
+    return '（最近一晚）';
+  });
+  s = s.replace(/(\d{1,3}):(\d{2})\s*日/g, (_, h, mi) => {
+    const hh = Number(h);
+    const mm = Number(mi);
+    if (
+      Number.isFinite(hh) &&
+      Number.isFinite(mm) &&
+      hh >= 0 &&
+      hh <= 23 &&
+      mm >= 0 &&
+      mm <= 59
+    ) {
+      return `${String(hh).padStart(2, '0')}:${String(mi).padStart(2, '0')} 当晚`;
+    }
+    return '最近一晚';
+  });
+
   // 数字误写成 72..8 → 72.8
   s = s.replace(/(\d)\s*\.\.+\s*(\d+)/g, '$1.$2');
 
@@ -97,11 +190,64 @@ export function sanitizeHealthAdviceText(raw) {
 
   // 去掉酷似底部 Tab 的被误粘贴进来的行尾
   s = stripTrailingTabNavLines(s);
+  // 删除模型串台残片、孤立编号、重复标题与重复行
+  s = cleanupStructureNoise(s);
 
   // 首尾空白再清一次
   s = s.replace(/\n{4,}/g, '\n\n\n').trim();
 
   return s;
+}
+
+function cleanupStructureNoise(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const out = [];
+  const headingLastIndex = new Map();
+  let lastContent = '';
+
+  const norm = (line) => line.replace(/\s+/g, '').toLowerCase();
+  const headingKey = (line) => {
+    const t = line.trim();
+    if (!t) return '';
+    const noPrefix = t.replace(/^#{1,6}\s*/, '');
+    if (/^[\u4e00-\u9fa5A-Za-z]{2,20}(分析|建议|提示|总结|结论)$/.test(noPrefix)) return noPrefix;
+    return '';
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const rawLine = lines[i];
+    const t = rawLine.trim();
+    const next = (lines[i + 1] || '').trim();
+    const prevKept = (out[out.length - 1] || '').trim();
+
+    // 清理对话角色串台（含引号/冒号变体）
+    if (/^['"`‘’“”]?\s*(user|assistant|system)\s*[:：]?\s*['"`‘’“”]?$/i.test(t)) continue;
+    // 清理孤立条目符号
+    if (/^[-*•·]\s*$/.test(t)) continue;
+    // 清理无语义单行编号（常见模型崩溃残片）
+    if (/^\d{1,2}$/.test(t)) {
+      if (!prevKept || !next || /^#{1,6}\s*/.test(next) || /^[\u4e00-\u9fa5A-Za-z]{2,20}(分析|建议|提示|总结|结论)$/.test(next)) {
+        continue;
+      }
+    }
+
+    const hk = headingKey(t);
+    if (hk) {
+      const lastIdx = headingLastIndex.get(hk);
+      // 同一标题在极短间隔重复，跳过后续副本
+      if (typeof lastIdx === 'number' && out.length - lastIdx <= 4) continue;
+      headingLastIndex.set(hk, out.length);
+    }
+
+    // 邻近重复行去重
+    const n = norm(t);
+    if (n && n === norm(lastContent)) continue;
+
+    out.push(rawLine.replace(/\s+$/g, ''));
+    if (t) lastContent = t;
+  }
+
+  return out.join('\n').replace(/\n{4,}/g, '\n\n\n').trim();
 }
 
 /**

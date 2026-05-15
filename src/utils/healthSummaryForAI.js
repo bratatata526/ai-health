@@ -168,7 +168,9 @@ function summarizeSleep(sleepEntries) {
     const deepRatio = deepOk.map((n) =>
       n.totalHours > 0 ? (n.deepHours / n.totalHours) * 100 : 0,
     );
-    block += `- 深睡占总睡眠比例均值约 ${mean(deepRatio).toFixed(0)}%（仅供参考）\n`;
+    const pct = Math.round(mean(deepRatio));
+    // 不向摘要中写入 ASCII 「%」，减少模型复述时叠出「%%%」类乱码；由模型改用「百分之若干」或与摘要数字一致的表述。
+    block += `- 深睡占总睡眠时长比例的粗算均值：约百分之 ${pct}\n`;
   }
   const lastFew = nights.slice(-5);
   block += `- 最近几晚概览：\n`;

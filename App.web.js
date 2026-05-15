@@ -1,6 +1,6 @@
 import 'react-native-get-random-values';
-import React, { useEffect, useState } from 'react';
-import { Image, View, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Image, View, StyleSheet, TouchableOpacity, Animated, Easing, Alert } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
@@ -16,6 +16,7 @@ import ReportScreen from './src/screens/ReportScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import AIScreen from './src/screens/AIScreen';
 import TongueScreen from './src/screens/TongueScreen';
+import CareAccountsScreen from './src/screens/CareAccountsScreen';
 import AIIcon from './src/components/AIIcon';
 import FloatingAIAssistant from './src/components/FloatingAIAssistant';
 import { AccountCloudModal } from './src/components/AccountCloudModal';
@@ -23,6 +24,7 @@ import { theme, appFontFamilies } from './src/theme';
 import { MedicineService } from './src/services/MedicineService';
 import { AuthService } from './src/services/AuthService';
 import { AutoCloudSyncService } from './src/services/AutoCloudSyncService';
+import { CareAccountService } from './src/services/CareAccountService';
 import { CloudSyncService } from './src/services/CloudSyncService';
 
 const Tab = createBottomTabNavigator();
@@ -31,6 +33,7 @@ const WEB_SIDEBAR_WIDTH = 160;
 
 const PAGE_TITLES = {
   '首页': '首页',
+  '关怀': '关怀账号',
   '药品': '药品管理',
   '设备': '设备数据',
   '舌诊': 'AI 舌诊',
@@ -55,6 +58,77 @@ if (typeof document !== 'undefined') {
   if (t === '' || t === 'undefined') {
     document.title = 'AI健康管家';
   }
+}
+
+/** Web 顶栏：[人像] [下三角]，悬停三角翻转为向上并变绿；菜单浮层紧贴下方避免失焦 */
+function WebHeaderAccountDropdown({ prefetch, onAccountInfo, onChangePassword, onLogout }) {
+  const [hover, setHover] = useState(false);
+  const chevronSpin = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(chevronSpin, {
+      toValue: hover ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [hover, chevronSpin]);
+
+  const rotate = chevronSpin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  const chevronColor = hover ? theme.colors.success : theme.colors.textSecondary;
+
+  return (
+    <View
+      style={styles.webHeaderAccountWrap}
+      onMouseEnter={() => {
+        prefetch?.();
+        setHover(true);
+      }}
+      onMouseLeave={() => setHover(false)}
+    >
+      <View style={styles.webHeaderAccountTriggerRow}>
+        <Ionicons name="person-circle-outline" size={26} color={theme.colors.textSecondary} />
+        <Animated.View style={{ transform: [{ rotate }] }}>
+          <Ionicons name="chevron-down" size={17} color={chevronColor} />
+        </Animated.View>
+      </View>
+      {hover ? (
+        <View style={styles.webHeaderAccountMenu}>
+          <TouchableOpacity
+            style={styles.webHeaderAccountMenuItem}
+            onPress={() => {
+              setHover(false);
+              onAccountInfo();
+            }}
+          >
+            <Text style={styles.webHeaderAccountMenuText}>账号信息</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.webHeaderAccountMenuItem}
+            onPress={() => {
+              setHover(false);
+              onChangePassword();
+            }}
+          >
+            <Text style={styles.webHeaderAccountMenuText}>修改密码</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.webHeaderAccountMenuItem, styles.webHeaderAccountMenuItemLast]}
+            onPress={() => {
+              setHover(false);
+              onLogout();
+            }}
+          >
+            <Text style={[styles.webHeaderAccountMenuText, { color: theme.colors.error }]}>退出登录</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 // Logo组件 - 作为标题显示（可点击回到首页）
@@ -141,6 +215,15 @@ export default function App() {
     return () => AutoCloudSyncService.stop();
   }, []);
 
+  useEffect(() => {
+    if (!authed) {
+      CareAccountService.stopPolling();
+      return undefined;
+    }
+    CareAccountService.startPolling();
+    return () => CareAccountService.stopPolling();
+  }, [authed]);
+
   // 账号弹窗
   const openAccountDialog = async () => {
     try {
@@ -158,8 +241,17 @@ export default function App() {
 
   const accountLogout = async () => {
     try {
-      await AuthService.logout();
+      const hadSession = await AuthService.isLoggedIn();
+      const { cloudSaved } = await AuthService.logout();
       setAuthed(false);
+      if (hadSession && !cloudSaved) {
+        setTimeout(() => {
+          Alert.alert(
+            '已退出',
+            '退出前未能将数据上传到云端，请确认云端服务可用。若本次登录中录入了身高或体征，下次登录可能无法从云端恢复。',
+          );
+        }, 200);
+      }
     } catch (e) {
       // ignore
     }
@@ -179,6 +271,15 @@ export default function App() {
       .then(() => setAuthed(false))
       .catch(() => {});
   };
+
+  const prefetchHeaderAccount = useCallback(async () => {
+    try {
+      const profile = await AuthService.getProfile();
+      setAccountInfo((prev) => ({ ...prev, profile }));
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Expo Web：修复浏览器标签标题显示为 undefined 的问题
   useEffect(() => {
@@ -269,12 +370,32 @@ export default function App() {
               <TouchableOpacity
                 style={styles.webSidebarAccountBtn}
                 activeOpacity={0.7}
-                onPress={openAccountDialog}
-                onMouseEnter={() => setHoveredItem('__account__')}
+                onPress={() => {
+                  setActiveTab('关怀');
+                  if (navigationRef.isReady()) {
+                    navigationRef.navigate('关怀');
+                  }
+                }}
+                onMouseEnter={() => setHoveredItem('__care__')}
                 onMouseLeave={() => setHoveredItem(null)}
               >
-                <Ionicons name="person-circle-outline" size={20} color={hoveredItem === '__account__' ? theme.colors.primary : theme.colors.textSecondary} />
-                <Text style={[styles.webSidebarAccountText, hoveredItem === '__account__' && { color: theme.colors.primary }]}>账号</Text>
+                <Ionicons
+                  name={activeTab === '关怀' ? 'heart' : 'heart-outline'}
+                  size={20}
+                  color={
+                    hoveredItem === '__care__' || activeTab === '关怀'
+                      ? theme.colors.primary
+                      : theme.colors.textSecondary
+                  }
+                />
+                <Text
+                  style={[
+                    styles.webSidebarAccountText,
+                    (hoveredItem === '__care__' || activeTab === '关怀') && { color: theme.colors.primary },
+                  ]}
+                >
+                  关怀账号
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -295,6 +416,7 @@ export default function App() {
                 shadowOpacity: 1,
                 shadowRadius: 6,
                 shadowOffset: { width: 0, height: 2 },
+                overflow: 'visible',
               },
               headerTintColor: theme.colors.text,
               headerTitleStyle: {
@@ -305,15 +427,19 @@ export default function App() {
               },
               headerTitle: PAGE_TITLES[route.name] || route.name,
               headerRight: () => (
-                <TouchableOpacity onPress={openAccountDialog} style={{ marginRight: 16 }}>
-                  <Ionicons name="person-circle-outline" size={28} color={theme.colors.textSecondary} />
-                </TouchableOpacity>
+                <WebHeaderAccountDropdown
+                  prefetch={prefetchHeaderAccount}
+                  onAccountInfo={openAccountDialog}
+                  onChangePassword={() => setPwdDialogVisible(true)}
+                  onLogout={accountLogout}
+                />
               ),
             })}
           >
             <Tab.Screen name="首页" options={{ headerShown: false }}>
               {(props) => <HomeScreen {...props} onLogout={() => setAuthed(false)} />}
             </Tab.Screen>
+            <Tab.Screen name="关怀" component={CareAccountsScreen} />
             <Tab.Screen name="药品" component={MedicineScreen} />
             <Tab.Screen name="设备" component={DeviceScreen} />
             <Tab.Screen name="舌诊" component={TongueScreen} />
@@ -493,6 +619,50 @@ const styles = StyleSheet.create({
   webMainContent: {
     flex: 1,
     minWidth: 0,
+  },
+  webHeaderAccountWrap: {
+    position: 'relative',
+    alignItems: 'flex-end',
+    marginRight: 12,
+    paddingLeft: 12,
+    zIndex: 2000,
+  },
+  webHeaderAccountTriggerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+  },
+  webHeaderAccountMenu: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: -3,
+    minWidth: 176,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 12,
+  },
+  webHeaderAccountMenuItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.colors.outlineVariant,
+  },
+  webHeaderAccountMenuItemLast: {
+    borderBottomWidth: 0,
+  },
+  webHeaderAccountMenuText: {
+    fontFamily: appFontFamilies.regular,
+    fontSize: 14,
+    color: theme.colors.text,
   },
   loadingContainer: {
     flex: 1,

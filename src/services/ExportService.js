@@ -31,29 +31,68 @@ function buildHealthReportPdfFilename(at = new Date()) {
   return `健康报告-${y}年${m}月${d}日${h}时${min}分.pdf`;
 }
 
+/** @param {string} reportType */
+function normalizeAdviceScope(reportType = 'week') {
+  return reportType === 'month' ? 'month' : 'week';
+}
+
+/**
+ * 与报告页相同时间窗，筛存储中的心率/血糖/睡眠（及分钟均值），再用于个性化建议摘要。
+ * @param {object} healthPayload
+ * @param {Date} periodStart
+ */
+function filterStoredHealthForReportPeriod(healthPayload, periodStart) {
+  const t0 = periodStart instanceof Date ? periodStart.getTime() : NaN;
+  if (!Number.isFinite(t0) || !healthPayload) return healthPayload || {};
+  const inRange = (item) => {
+    const ts = item?.date ? new Date(item.date).getTime() : NaN;
+    return Number.isFinite(ts) && ts >= t0;
+  };
+  return {
+    ...healthPayload,
+    heartRate: (healthPayload.heartRate || []).filter(inRange),
+    bloodGlucose: (healthPayload.bloodGlucose || []).filter(inRange),
+    sleep: (healthPayload.sleep || []).filter(inRange),
+    heartRateMinuteAvg: (healthPayload.heartRateMinuteAvg || []).filter(inRange),
+  };
+}
+
 /**
  * 数据导出服务
  * 支持导出健康数据、药品信息、报告等为CSV、JSON格式
  */
 export class ExportService {
-  static async ensurePersonalizedAdvice() {
+  /**
+   * 获取个性化健康建议（默认使用缓存）。
+   * @param {string} reportType `'week'` | `'month'`
+   * @param {{ forceRefresh?: boolean }} [options] `forceRefresh: true` 时忽略缓存重新调用 AI
+   */
+  static async ensurePersonalizedAdvice(reportType = 'week', options = {}) {
     try {
-      const cached = await PersonalizedAdviceCache.get();
-      if (cached?.text && cached.text.trim().length > 0) {
-        return cached.text.trim();
+      const { forceRefresh = false } = options;
+      const scope = normalizeAdviceScope(reportType);
+      if (!forceRefresh) {
+        const cached = await PersonalizedAdviceCache.get(scope);
+        if (cached?.text && cached.text.trim().length > 0) {
+          return cached.text.trim();
+        }
       }
 
       const healthData = await DeviceService.getHealthDataForStorage();
+      const periodStart = ReportService.resolvePeriodStart(scope);
+      const windowed = filterStoredHealthForReportPeriod(healthData, periodStart);
       const medicines = await MedicineService.getAllMedicines();
       const userData = {
-        heartRate: healthData?.heartRate || [],
-        bloodGlucose: healthData?.bloodGlucose || [],
-        sleep: healthData?.sleep || [],
+        heartRate: windowed?.heartRate || [],
+        bloodGlucose: windowed?.bloodGlucose || [],
+        sleep: windowed?.sleep || [],
         medicines: medicines || [],
       };
-      const text = await AIService.generatePersonalizedAdvice(userData);
+      const periodLabel =
+        scope === 'week' ? '最近 7 天（与周报范围一致）' : '最近一月（与月报范围一致）';
+      const text = await AIService.generatePersonalizedAdvice(userData, { periodLabel });
       const trimmed = (text || '').trim();
-      if (trimmed) await PersonalizedAdviceCache.set(trimmed);
+      if (trimmed) await PersonalizedAdviceCache.set(trimmed, scope);
       return trimmed;
     } catch (e) {
       console.warn('自动生成个性化建议失败:', e);
@@ -200,7 +239,7 @@ export class ExportService {
   static async exportReportToText(reportType = 'week', useAI = false) {
     try {
       const report = await ReportService.generateReport(reportType, useAI);
-      const assistantAdvice = await this.ensurePersonalizedAdvice();
+      const assistantAdvice = await this.ensurePersonalizedAdvice(reportType);
       const formatMetric = (value, unit) => (value != null ? `${value} ${unit}` : '未填写');
       const formatBmi = (value) => (value != null ? `${value}` : '未填写');
       
@@ -252,7 +291,7 @@ export class ExportService {
 
     const reportPromise = ReportService.generateReport(reportType, useAI);
 
-    const assistantAdvicePromise = this.ensurePersonalizedAdvice();
+    const assistantAdvicePromise = this.ensurePersonalizedAdvice(reportType);
 
     const [report, assistantAdvice] = await Promise.all([
       reportPromise,

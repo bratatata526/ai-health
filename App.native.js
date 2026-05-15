@@ -18,6 +18,7 @@ import ReportScreen from './src/screens/ReportScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import AIScreen from './src/screens/AIScreen';
 import TongueScreen from './src/screens/TongueScreen';
+import CareAccountsScreen from './src/screens/CareAccountsScreen';
 import AIIcon from './src/components/AIIcon';
 import FloatingAIAssistant from './src/components/FloatingAIAssistant';
 import { theme, appFontFamilies } from './src/theme';
@@ -31,6 +32,7 @@ import {
 } from './src/services/MedicineService';
 import { AuthService } from './src/services/AuthService';
 import { AutoCloudSyncService } from './src/services/AutoCloudSyncService';
+import { CareAccountService } from './src/services/CareAccountService';
 
 const Tab = createBottomTabNavigator();
 const navigationRef = createNavigationContainerRef();
@@ -99,6 +101,15 @@ export default function App() {
     AutoCloudSyncService.start();
     return () => AutoCloudSyncService.stop();
   }, []);
+
+  useEffect(() => {
+    if (!authed) {
+      CareAccountService.stopPolling();
+      return undefined;
+    }
+    CareAccountService.startPolling();
+    return () => CareAccountService.stopPolling();
+  }, [authed]);
 
   useEffect(() => {
     // 1) 通知处理器（全局）
@@ -211,6 +222,8 @@ export default function App() {
                   iconName = focused ? 'watch' : 'watch-outline';
                 } else if (route.name === '舌诊') {
                   iconName = focused ? 'scan' : 'scan-outline';
+                } else if (route.name === '关怀') {
+                  iconName = focused ? 'heart' : 'heart-outline';
                 } else if (route.name === '报告') {
                   iconName = focused ? 'document-text' : 'document-text-outline';
                 }
@@ -245,6 +258,13 @@ export default function App() {
               headerTitle: () => <LogoTitle />,
             })}
           >
+            <Tab.Screen
+              name="关怀"
+              component={CareAccountsScreen}
+              options={{
+                headerTitle: '关怀账号',
+              }}
+            />
             <Tab.Screen name="首页">
               {(props) => <HomeScreen {...props} onLogout={() => setAuthed(false)} />}
             </Tab.Screen>

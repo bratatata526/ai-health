@@ -92,12 +92,30 @@ export class AuthService {
     return me;
   }
 
-  static async logout() {
+  /**
+   * @param {{ skipCloudPush?: boolean }} [options] 注销账号后服务器已删除数据，跳过退出前上传
+   * @returns {Promise<{ cloudSaved: boolean }>} cloudSaved 表示退出前是否成功把快照写入云端
+   */
+  static async logout(options = {}) {
+    const skipCloudPush = Boolean(options?.skipCloudPush);
+    let cloudSaved = true;
+    const hadToken = Boolean(await this.getToken());
+    if (hadToken && !skipCloudPush) {
+      try {
+        const { AutoCloudSyncService } = await import('./AutoCloudSyncService');
+        cloudSaved = await AutoCloudSyncService.syncNowForLogout();
+      } catch {
+        cloudSaved = false;
+      }
+    }
+
     const profile = await this.getProfile();
     const userId = profile?.id || profile?.email;
     await this.clearLocalData(userId);
     await SecureStorage.removeItem(AUTH_TOKEN_KEY);
     await SecureStorage.removeItem(USER_PROFILE_KEY);
+
+    return { cloudSaved };
   }
 
   // 清除所有本地业务数据（不包括 token 和 profile）
@@ -134,7 +152,13 @@ export class AuthService {
     const token = await this.getToken();
     if (!token) throw new Error('未登录');
     await httpJson('/me', { method: 'DELETE', token });
-    await this.logout();
+    try {
+      const { CareAccountService } = await import('./CareAccountService');
+      await CareAccountService.clearAllLinked();
+    } catch {
+      // ignore
+    }
+    await this.logout({ skipCloudPush: true });
     return true;
   }
 }

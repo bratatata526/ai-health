@@ -95,6 +95,42 @@ export class AutoCloudSyncService {
     this._blockedByConflict = false;
   }
 
+  /**
+   * 退出登录前：取消防抖并立即尽力上传本机快照。
+   * @returns {Promise<boolean>} 是否已成功写入云端（含冲突时强制覆盖）
+   */
+  static async syncNowForLogout() {
+    if (this._timer) {
+      clearTimeout(this._timer);
+      this._timer = null;
+    }
+
+    const token = await AuthService.getToken();
+    if (!token) return true;
+
+    this._blockedByConflict = false;
+
+    try {
+      await CloudSyncService.syncUp();
+      this._dirty = false;
+      return true;
+    } catch (e) {
+      const msg = `${e?.message || e}`;
+      const isConflict =
+        /conflict/i.test(msg) || /\b409\b/.test(msg) || msg.includes('Server has newer');
+      if (isConflict) {
+        try {
+          await CloudSyncService.forceSyncUp();
+          this._dirty = false;
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    }
+  }
+
   static schedule(immediate = false) {
     if (this._blockedByConflict) return;
     if (this._timer) clearTimeout(this._timer);
