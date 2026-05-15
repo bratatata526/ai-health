@@ -6,18 +6,22 @@
 
 const normalizeKey = (v) => String(v || '').trim();
 const hasKey = (v) => normalizeKey(v).length > 0;
+const isPlaceholder = (v) => {
+  const k = normalizeKey(v).toLowerCase();
+  return !k || k.startsWith('your_') || k.includes('your_api_key') || k.includes('your_app_code');
+};
 
 const juheKey = normalizeKey(
-  process.env.EXPO_PUBLIC_JUHE_API_KEY || process.env.JUHE_API_KEY || '4cf1a2001a4c972985cef0dbb4cd5db4'
+  process.env.EXPO_PUBLIC_JUHE_API_KEY || process.env.JUHE_API_KEY || ''
 );
 const tianKey = normalizeKey(
-  process.env.EXPO_PUBLIC_TIANAPI_KEY || process.env.TIANAPI_KEY || 'YOUR_TIANAPI_KEY'
+  process.env.EXPO_PUBLIC_TIANAPI_KEY || process.env.TIANAPI_KEY || ''
 );
 const wanweiCode = normalizeKey(
-  process.env.EXPO_PUBLIC_WANWEI_APP_CODE || process.env.WANWEI_APP_CODE || 'YOUR_APP_CODE'
+  process.env.EXPO_PUBLIC_WANWEI_APP_CODE || process.env.WANWEI_APP_CODE || ''
 );
 const jisuKey = normalizeKey(
-  process.env.EXPO_PUBLIC_JISU_API_KEY || process.env.JISU_API_KEY || 'YOUR_JISU_API_KEY'
+  process.env.EXPO_PUBLIC_JISU_API_KEY || process.env.JISU_API_KEY || ''
 );
 
 export const MEDICINE_DB_CONFIG = {
@@ -28,7 +32,7 @@ export const MEDICINE_DB_CONFIG = {
     // 使用 https 以兼容 Web / iOS 等更严格的环境；若接口确实不支持 https，可在 Web 端走本地代理
     BASE_URL: 'https://apis.juhe.cn/drug/query',
     API_KEY: juheKey,
-    ENABLED: hasKey(juheKey),
+    ENABLED: hasKey(juheKey) && !isPlaceholder(juheKey),
   },
 
   // 方案二：天聚数行药品说明书API（备用）
@@ -37,7 +41,7 @@ export const MEDICINE_DB_CONFIG = {
   TIANAPI: {
     BASE_URL: 'https://apis.tianapi.com/yaopin/index',
     API_KEY: tianKey,
-    ENABLED: hasKey(tianKey) && tianKey !== 'YOUR_TIANAPI_KEY',
+    ENABLED: hasKey(tianKey) && !isPlaceholder(tianKey),
   },
 
   // 方案三：万维易源药品信息查询API（阿里云市场）
@@ -45,7 +49,7 @@ export const MEDICINE_DB_CONFIG = {
   WANWEI_API: {
     BASE_URL: 'https://ali-medicine.showapi.com',
     APP_CODE: wanweiCode,
-    ENABLED: hasKey(wanweiCode) && wanweiCode !== 'YOUR_APP_CODE',
+    ENABLED: hasKey(wanweiCode) && !isPlaceholder(wanweiCode),
   },
 
   // 方案四：极速数据药品信息API
@@ -53,7 +57,7 @@ export const MEDICINE_DB_CONFIG = {
   JISU_API: {
     BASE_URL: 'https://api.jisuapi.com/drug/query',
     API_KEY: jisuKey,
-    ENABLED: hasKey(jisuKey) && jisuKey !== 'YOUR_JISU_API_KEY',
+    ENABLED: hasKey(jisuKey) && !isPlaceholder(jisuKey),
   },
 };
 

@@ -227,6 +227,146 @@ function deriveAlertsFromData(account /** CareLinkedAccount */, data /** object 
   });
 }
 
+function parseHHMM(text) {
+  const m = String(text || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return null;
+  }
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function toISODate(dateLike) {
+  const d = new Date(dateLike);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+function addDays(dateLike, days) {
+  const d = new Date(dateLike);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function makeDateAt(isoDate, hhmm) {
+  const [y, m, d] = String(isoDate).split('-').map((x) => Number(x));
+  const parsed = parseHHMM(hhmm) || '08:00';
+  const [hh, mm] = parsed.split(':').map((x) => Number(x));
+  const out = new Date();
+  out.setFullYear(y, (m || 1) - 1, d || 1);
+  out.setHours(hh, mm, 0, 0);
+  return out;
+}
+
+function buildTimesFromConfig(reminderConfig = {}) {
+  const mode = String(reminderConfig.mode || 'fixed_times');
+  if (mode === 'prn') return [];
+  if (mode === 'fixed_times') {
+    const times = Array.isArray(reminderConfig.times) ? reminderConfig.times : [];
+    return [...new Set(times.map(parseHHMM).filter(Boolean))].sort();
+  }
+  if (mode === 'times_per_day') {
+    const n = Math.max(1, Math.min(12, Number(reminderConfig.timesPerDay || 2)));
+    if (n === 1) return ['08:00'];
+    const start = 8 * 60;
+    const end = 20 * 60;
+    const span = end - start;
+    const out = [];
+    for (let i = 0; i < n; i += 1) {
+      const t = start + Math.round((span * i) / (n - 1));
+      const hh = String(Math.floor(t / 60)).padStart(2, '0');
+      const mm = String(t % 60).padStart(2, '0');
+      out.push(`${hh}:${mm}`);
+    }
+    return out;
+  }
+  if (mode === 'interval_hours') {
+    const ih = Math.max(1, Math.min(24, Number(reminderConfig.intervalHours || 8)));
+    const start = parseHHMM(reminderConfig.intervalStartTime) || '08:00';
+    const [sh, sm] = start.split(':').map((x) => Number(x));
+    const startMinutes = sh * 60 + sm;
+    const out = [];
+    for (let minute = startMinutes; minute < 24 * 60; minute += ih * 60) {
+      const hh = String(Math.floor(minute / 60)).padStart(2, '0');
+      const mm = String(minute % 60).padStart(2, '0');
+      out.push(`${hh}:${mm}`);
+    }
+    return out;
+  }
+  return [];
+}
+
+function buildCareReminderRowsForMedicine(medicine) {
+  const cfg = medicine?.reminderConfig || {};
+  if (cfg.enabled === false || cfg.paused === true) return [];
+  const mode = String(cfg.mode || 'fixed_times');
+  if (mode === 'prn') return [];
+  const times = buildTimesFromConfig(cfg);
+  if (!times.length) return [];
+
+  const now = new Date();
+  const today = toISODate(now);
+  const startDate = String(cfg.startDate || today);
+  const horizonEnd = toISODate(addDays(today, 30));
+  const endDate = cfg.endDate && String(cfg.endDate) < horizonEnd ? String(cfg.endDate) : horizonEnd;
+  const effectiveStart = startDate > today ? startDate : today;
+  const medicineId = medicine?.id || 'unknown_medicine';
+  const out = [];
+
+  for (let day = 0; ; day += 1) {
+    const curDate = toISODate(addDays(effectiveStart, day));
+    if (curDate > endDate) break;
+    times.forEach((t) => {
+      const dt = makeDateAt(curDate, t);
+      out.push({
+        id: `${medicineId}_${dt.toISOString().replace(/[:.]/g, '-')}`,
+        medicineId,
+        scheduledAt: dt.toISOString(),
+        notificationId: null,
+        status: 'scheduled',
+        createdAt: new Date().toISOString(),
+        snoozeCount: 0,
+        mode,
+        mealTag: cfg.mealTag || 'none',
+        doseAmount: cfg.doseAmount ?? null,
+        doseUnit: cfg.doseUnit ?? '',
+      });
+    });
+  }
+  return out;
+}
+
+function buildCareReminderSummary(reminderConfig = {}) {
+  if (reminderConfig.enabled === false) return '未启用提醒';
+  if (reminderConfig.paused === true) return '提醒已暂停';
+  const mode = String(reminderConfig.mode || 'fixed_times');
+  if (mode === 'prn') return '按需用药（无定时提醒）';
+  const times = buildTimesFromConfig(reminderConfig);
+  if (!times.length) return '未设置提醒时间';
+  if (mode === 'times_per_day') return `每日 ${Number(reminderConfig.timesPerDay || 2)} 次（${times.join('、')}）`;
+  if (mode === 'interval_hours') return `每隔 ${Number(reminderConfig.intervalHours || 8)} 小时（起始 ${parseHHMM(reminderConfig.intervalStartTime) || '08:00'}）`;
+  return `定点提醒：${times.join('、')}`;
+}
+
+function normalizeMedicineName(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[()（）\[\]【】\-—_·,，。./\\]/g, '');
+}
+
+function findMedicineDupIndices(medicines, incomingMedicineName) {
+  const target = normalizeMedicineName(incomingMedicineName);
+  if (!target) return [];
+  return (Array.isArray(medicines) ? medicines : [])
+    .map((m, idx) => ({ m, idx }))
+    .filter(({ m }) => normalizeMedicineName(m?.name) === target)
+    .map(({ idx }) => idx);
+}
+
 export class CareAccountService {
   static getLatestAlerts() {
     return latestAlerts.slice();
@@ -398,13 +538,34 @@ export class CareAccountService {
     pollTimer = null;
   }
 
+  static async inspectCareMedicineConflict(careAccount, medicine) {
+    const token = careAccount?.token;
+    if (!token) throw new Error('关怀账号令牌无效');
+    const row = await this.fetchStoredUserData(token);
+    if (row && row.__unauthorized) throw new Error('关怀账号登录已失效，请在账号中移除后重新添加');
+    if (!row) throw new Error('无法读取关怀账号云端数据（请确认网络与对方已同步）');
+    const { snapshotRoot } = normalizeSnapshotRoots(row);
+    const data = snapshotRoot.data || {};
+    const medicines = Array.isArray(data['@medicines']) ? data['@medicines'] : [];
+    const dupIndices = findMedicineDupIndices(medicines, medicine?.name);
+    if (!dupIndices.length) return { exists: false };
+    const first = medicines[dupIndices[0]] || {};
+    return {
+      exists: true,
+      medicineId: first.id || null,
+      medicineName: first.name || medicine?.name || '该药品',
+      duplicateCount: dupIndices.length,
+    };
+  }
+
   /**
    * 将当前药品模板（不含本地图片 URI）写入对方云端快照，便于对方同步后生成提醒日程。
    * @param {CareLinkedAccount} careAccount
    * @param {object} medicine
    * @param {string} [caregiverEmail]
+   * @param {{ reminderConfig?: object, overwriteExisting?: boolean }} [options]
    */
-  static async mergeMedicineTemplateIntoCareCloud(careAccount, medicine, caregiverEmail = '') {
+  static async mergeMedicineTemplateIntoCareCloud(careAccount, medicine, caregiverEmail = '', options = {}) {
     const token = careAccount?.token;
     if (!token) throw new Error('关怀账号令牌无效');
 
@@ -415,8 +576,21 @@ export class CareAccountService {
     let { snapshotRoot, revision } = normalizeSnapshotRoots(row);
     const data = snapshotRoot.data || {};
     const medicines = Array.isArray(data['@medicines']) ? [...data['@medicines']] : [];
+    const dupIndices = findMedicineDupIndices(medicines, medicine?.name);
+    const hasDuplicate = dupIndices.length > 0;
+    if (hasDuplicate && !options?.overwriteExisting) {
+      const first = medicines[dupIndices[0]] || {};
+      const err = new Error(`已对该药品下发过提醒：${first.name || medicine?.name || '该药品'}。请确认是否覆盖之前的提醒。`);
+      err.code = 'CARE_MEDICINE_DUPLICATE';
+      err.conflict = {
+        medicineId: first.id || null,
+        medicineName: first.name || medicine?.name || '该药品',
+        duplicateCount: dupIndices.length,
+      };
+      throw err;
+    }
 
-    const newId = newMedicineLocalId();
+    const newId = hasDuplicate ? (medicines[dupIndices[0]]?.id || newMedicineLocalId()) : newMedicineLocalId();
     const cloned = typeof medicine === 'object' && medicine ? { ...medicine } : {};
     delete cloned.image;
     delete cloned.images;
@@ -424,20 +598,42 @@ export class CareAccountService {
     cloned.createdAt = new Date().toISOString();
     cloned.careTemplateFrom = String(caregiverEmail || '').trim() || 'caregiver';
     cloned.careTemplateAt = new Date().toISOString();
+    if (options?.reminderConfig && typeof options.reminderConfig === 'object') {
+      cloned.reminderConfig = { ...options.reminderConfig };
+    }
 
     const remindersMap = { ...(data['@medicine_reminders'] && typeof data['@medicine_reminders'] === 'object' ? data['@medicine_reminders'] : {}) };
-    const oldReminders = Array.isArray(remindersMap[medicine.id]) ? remindersMap[medicine.id] : [];
-    const stripped = oldReminders.map((r) => ({
-      ...r,
-      id: `${newId}_${String(r.scheduledAt || '').replace(/[:.]/g, '-')}`,
-      medicineId: newId,
-      notificationId: null,
-    }));
-    remindersMap[newId] = stripped;
+    // 下发时直接写入未来提醒行，保证对方同步后在药品页和 AI 助手都能马上拿到提醒上下文。
+    remindersMap[newId] = buildCareReminderRowsForMedicine(cloned);
+    // 若历史重复药品存在，清理重复条目的提醒行
+    if (dupIndices.length > 1) {
+      dupIndices.slice(1).forEach((idx) => {
+        const mid = medicines[idx]?.id;
+        if (mid && remindersMap[mid]) delete remindersMap[mid];
+      });
+    }
+
+    let nextMedicines;
+    if (hasDuplicate) {
+      const primaryIdx = dupIndices[0];
+      const base = medicines[primaryIdx] || {};
+      const merged = {
+        ...base,
+        ...cloned,
+        id: newId,
+        createdAt: base.createdAt || cloned.createdAt,
+        updatedAt: new Date().toISOString(),
+      };
+      nextMedicines = medicines
+        .filter((_, idx) => !dupIndices.slice(1).includes(idx))
+        .map((m, idx) => (idx === primaryIdx ? merged : m));
+    } else {
+      nextMedicines = [...medicines, cloned];
+    }
 
     const nextData = {
       ...data,
-      '@medicines': [...medicines, cloned],
+      '@medicines': nextMedicines,
       '@medicine_reminders': remindersMap,
     };
 
@@ -456,14 +652,37 @@ export class CareAccountService {
       const serverRow = put.data.server;
       const norm = normalizeSnapshotRoots(serverRow);
       const sData = { ...(norm.snapshotRoot.data || {}) };
-      const sMeds = Array.isArray(sData['@medicines']) ? [...sData['@medicines']] : [];
-      sMeds.push(cloned);
+      const sMedsRaw = Array.isArray(sData['@medicines']) ? [...sData['@medicines']] : [];
+      const sDup = findMedicineDupIndices(sMedsRaw, medicine?.name);
+      let sMeds = sMedsRaw;
+      if (sDup.length > 0) {
+        const base = sMedsRaw[sDup[0]] || {};
+        const merged = {
+          ...base,
+          ...cloned,
+          id: base.id || newId,
+          createdAt: base.createdAt || cloned.createdAt,
+          updatedAt: new Date().toISOString(),
+        };
+        sMeds = sMedsRaw
+          .filter((_, idx) => !sDup.slice(1).includes(idx))
+          .map((m, idx) => (idx === sDup[0] ? merged : m));
+      } else {
+        sMeds = [...sMedsRaw, cloned];
+      }
       const sRem = {
         ...(sData['@medicine_reminders'] && typeof sData['@medicine_reminders'] === 'object'
           ? sData['@medicine_reminders']
           : {}),
       };
-      sRem[newId] = stripped;
+      const targetId = sDup.length > 0 ? (sMedsRaw[sDup[0]]?.id || newId) : newId;
+      sRem[targetId] = buildCareReminderRowsForMedicine({ ...cloned, id: targetId });
+      if (sDup.length > 1) {
+        sDup.slice(1).forEach((idx) => {
+          const mid = sMedsRaw[idx]?.id;
+          if (mid && sRem[mid]) delete sRem[mid];
+        });
+      }
       const mergedSnapshot = {
         profile: norm.snapshotRoot.profile || serverRow.profile,
         data: { ...sData, '@medicines': sMeds, '@medicine_reminders': sRem },
@@ -480,7 +699,12 @@ export class CareAccountService {
     }
 
     await this.refreshCareAlerts();
-    return true;
+    return {
+      success: true,
+      action: hasDuplicate ? 'updated' : 'created',
+      medicineId: newId,
+      medicineName: cloned.name || medicine?.name || '',
+    };
   }
 
   /**
@@ -518,5 +742,24 @@ export class CareAccountService {
     const ds = await this.fetchCareRecipientDataset(account);
     if (!ds) return [];
     return deriveAlertsFromData(account, ds.snapshotData);
+  }
+
+  /** 读取我对该关怀对象下发过的关怀用药记录（含提醒摘要）。 */
+  static async fetchCareRecordsForAccount(account) {
+    const ds = await this.fetchCareRecipientDataset(account);
+    if (!ds) return [];
+    const meds = Array.isArray(ds.snapshotData?.['@medicines']) ? ds.snapshotData['@medicines'] : [];
+    return meds
+      .filter((m) => m && typeof m === 'object' && m.careTemplateFrom)
+      .map((m) => ({
+        id: `${account.userId}_${m.id}`,
+        medicineName: m.name || '未命名药品',
+        dosage: m.dosage || '',
+        frequency: m.frequency || '',
+        reminderSummary: buildCareReminderSummary(m.reminderConfig || {}),
+        careTemplateAt: m.careTemplateAt || m.createdAt || null,
+        careTemplateFrom: m.careTemplateFrom || '',
+      }))
+      .sort((a, b) => new Date(b.careTemplateAt || 0).getTime() - new Date(a.careTemplateAt || 0).getTime());
   }
 }

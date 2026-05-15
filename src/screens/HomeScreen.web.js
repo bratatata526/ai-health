@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView, Alert, Platform, TouchableOpacity } from 'react-native';
-import { Button, Text, Dialog, Portal, TextInput } from 'react-native-paper';
+import { View, StyleSheet, ScrollView, Platform, TouchableOpacity } from 'react-native';
+import { Text } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { theme, textStyles } from '../theme';
@@ -8,11 +8,8 @@ import { CloudSyncService } from '../services/CloudSyncService';
 import { AuthService } from '../services/AuthService';
 import { AccountCloudModal } from '../components/AccountCloudModal';
 
-export default function HomeScreen({ navigation, onLogout }) {
+export default function HomeScreen({ navigation }) {
   const [accountDialogVisible, setAccountDialogVisible] = useState(false);
-  const [pwdDialogVisible, setPwdDialogVisible] = useState(false);
-  const [oldPassword, setOldPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [accountInfo, setAccountInfo] = useState({ profile: null, cloudMeta: null });
   const [hoveredCard, setHoveredCard] = useState(null);
 
@@ -32,59 +29,6 @@ export default function HomeScreen({ navigation, onLogout }) {
       setAccountInfo({ profile: null, cloudMeta: null });
     }
     setAccountDialogVisible(true);
-  };
-
-  const logout = async () => {
-    try {
-      const hadSession = await AuthService.isLoggedIn();
-      const { cloudSaved } = await AuthService.logout();
-      if (onLogout) onLogout();
-      setTimeout(() => {
-        Alert.alert(
-          '已退出',
-          hadSession && !cloudSaved
-            ? '已成功退出登录。退出前未能将数据上传到云端时，下次登录将无法恢复本次在本机新增的身高体重或体征，请确认已运行云端服务并保持网络通畅。'
-            : '已成功退出登录',
-        );
-      }, 300);
-    } catch (e) {
-      Alert.alert('退出失败', e.message || '退出登录时发生错误');
-    }
-  };
-
-  const changePassword = async () => {
-    try {
-      await AuthService.changePassword({ oldPassword, newPassword });
-      setPwdDialogVisible(false);
-      setOldPassword('');
-      setNewPassword('');
-      Alert.alert('成功', '密码已修改');
-    } catch (e) {
-      Alert.alert('失败', e.message || '修改密码失败');
-    }
-  };
-
-  const deleteAccount = async () => {
-    Alert.alert(
-      '注销账号',
-      '将删除云端账号与云端数据（本地数据不会自动删除）。确定继续吗？',
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '确认注销',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await AuthService.deleteAccount();
-              if (onLogout) onLogout();
-              setTimeout(() => Alert.alert('已注销', '账号已删除，请重新注册/登录'), 300);
-            } catch (e) {
-              Alert.alert('失败', e.message || '注销失败');
-            }
-          },
-        },
-      ]
-    );
   };
 
   // 功能入口数据
@@ -165,40 +109,7 @@ export default function HomeScreen({ navigation, onLogout }) {
         onProfileUpdated={(nextProfile) => {
           setAccountInfo((prev) => ({ ...prev, profile: nextProfile }));
         }}
-        onOpenPassword={() => setPwdDialogVisible(true)}
-        onDeleteAccount={deleteAccount}
-        onLogout={logout}
       />
-
-      <Portal>
-        <Dialog visible={pwdDialogVisible} onDismiss={() => setPwdDialogVisible(false)}>
-          <Dialog.Title>修改密码</Dialog.Title>
-          <Dialog.Content>
-            <TextInput
-              label="旧密码"
-              value={oldPassword}
-              onChangeText={setOldPassword}
-              secureTextEntry
-              mode="outlined"
-              style={styles.input}
-            />
-            <TextInput
-              label="新密码（至少6位）"
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-              mode="outlined"
-              style={styles.input}
-            />
-          </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setPwdDialogVisible(false)}>取消</Button>
-            <Button onPress={changePassword} disabled={!oldPassword || !newPassword}>
-              确定
-            </Button>
-          </Dialog.Actions>
-        </Dialog>
-      </Portal>
     </ScrollView>
   );
 }
@@ -341,8 +252,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.colors.textSecondary,
     marginTop: 2,
-  },
-  input: {
-    marginBottom: theme.spacing.sm,
   },
 });

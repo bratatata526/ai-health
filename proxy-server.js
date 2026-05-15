@@ -27,6 +27,29 @@
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
+const fs = require('fs');
+const path = require('path');
+
+function loadDotEnvIfExists() {
+  try {
+    const envPath = path.join(process.cwd(), '.env');
+    if (!fs.existsSync(envPath)) return;
+    const raw = fs.readFileSync(envPath, 'utf8');
+    raw.split(/\r?\n/).forEach((line) => {
+      const s = String(line || '').trim();
+      if (!s || s.startsWith('#')) return;
+      const idx = s.indexOf('=');
+      if (idx <= 0) return;
+      const key = s.slice(0, idx).trim();
+      const val = s.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+      if (key && process.env[key] == null) process.env[key] = val;
+    });
+  } catch {
+    // ignore .env parse errors
+  }
+}
+
+loadDotEnvIfExists();
 
 const PORT = Number(process.env.PORT || 3001);
 const ENV_BAIDU_API_KEY = process.env.BAIDU_API_KEY;

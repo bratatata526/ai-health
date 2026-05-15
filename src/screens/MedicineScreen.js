@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -35,12 +35,15 @@ import AIGeneratedIcon from '../components/AIGeneratedIcon';
 import { DrugInteractionCheckCard } from '../components/DrugInteractionCheckCard';
 import { theme, textStyles } from '../theme';
 import { MedicineService } from '../services/MedicineService';
+import { CloudSyncService } from '../services/CloudSyncService';
 import { ExportService } from '../services/ExportService';
 import { AuthService } from '../services/AuthService';
 import { CareAccountService } from '../services/CareAccountService';
-import { validateMedicineName, validateTimesText, validateDateRange, parseHHMM } from '../utils/validation';
+import { validateTimesText, validateDateRange, parseHHMM } from '../utils/validation';
 
 export default function MedicineScreen() {
+  const hasInitialCloudPullRef = useRef(false);
+  const [reminderTick, setReminderTick] = useState(Date.now());
   const [medicines, setMedicines] = useState([]);
   const [todayRemindersByMedicine, setTodayRemindersByMedicine] = useState({}); // { [medicineId]: Reminder[] }
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -54,19 +57,13 @@ export default function MedicineScreen() {
   const [recognitionResult, setRecognitionResult] = useState(null); // 识别结果
   const [errorDialogVisible, setErrorDialogVisible] = useState(false); // 错误对话框
   const [errorMessage, setErrorMessage] = useState(''); // 错误信息
-
-  // 手动录入兜底
-  const [manualEntryMode, setManualEntryMode] = useState(false);
-  const [manualName, setManualName] = useState('');
-  const [manualDosage, setManualDosage] = useState('');
-  const [manualFrequency, setManualFrequency] = useState('');
+  const [candidateDialogVisible, setCandidateDialogVisible] = useState(false);
+  const [candidateList, setCandidateList] = useState([]);
 
   // 提醒设置与统计
   const [reminderSettingsVisible, setReminderSettingsVisible] = useState(false);
   const [statsVisible, setStatsVisible] = useState(false);
   const [activeMedicineForSettings, setActiveMedicineForSettings] = useState(null);
-  const [reminderEnabled, setReminderEnabled] = useState(true);
-  const [reminderPaused, setReminderPaused] = useState(false);
   const [reminderTimesList, setReminderTimesList] = useState(['08:00', '20:00']);
   // 开始日期默认为今天（必填）
   const getTodayDate = () => new Date().toISOString().split('T')[0];
@@ -114,6 +111,11 @@ export default function MedicineScreen() {
     requestPermissions();
   }, []);
 
+  useEffect(() => {
+    const timer = setInterval(() => setReminderTick(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   const medicinesById = useMemo(() => {
     return new Map(medicines.map((m) => [m.id, m]));
   }, [medicines]);
@@ -137,7 +139,9 @@ export default function MedicineScreen() {
 
   const getDisplayFrequency = (medicine) => {
     const cfg = medicine?.reminderConfig || {};
-    const mode = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : null);
+    if (cfg.enabled === false) return '未设置提醒';
+    const modeRaw = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : null);
+    const mode = modeRaw === 'prn' ? 'fixed_times' : modeRaw;
     const meal =
       cfg.mealTag === 'before_meal'
         ? '饭前'
@@ -147,18 +151,18 @@ export default function MedicineScreen() {
         ? '睡前'
             : '';
     let base = '';
-    if (mode === 'prn') base = '按需';
-    else if (mode === 'interval_hours') base = `每隔${cfg.intervalHours || 8}小时`;
+    if (mode === 'interval_hours') base = `每隔${cfg.intervalHours || 8}小时`;
     else if (mode === 'times_per_day') base = `每日${cfg.timesPerDay || 2}次`;
     else if (Array.isArray(cfg.times) && cfg.times.length) base = `定点: ${cfg.times.join(',')}`;
-    else base = medicine?.frequency || '每日2次';
+    else base = '未设置提醒';
     return meal ? `${base}（${meal}）` : base;
   };
 
   // 根据提醒模式返回对应的图标
   const getReminderIcon = (medicine) => {
     const cfg = medicine?.reminderConfig || {};
-    const mode = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : null);
+    const modeRaw = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : null);
+    const mode = modeRaw === 'prn' ? 'fixed_times' : modeRaw;
     
     if (mode === 'fixed_times') {
       return <ClockIcon size={18} color={theme.colors.primary} />;
@@ -166,10 +170,40 @@ export default function MedicineScreen() {
       return <Ionicons name="timer-outline" size={18} color={theme.colors.primary} />;
     } else if (mode === 'times_per_day') {
       return <Ionicons name="repeat-outline" size={18} color={theme.colors.primary} />;
-    } else if (mode === 'prn') {
-      return <Ionicons name="hand-right-outline" size={18} color={theme.colors.primary} />;
     }
     return <Ionicons name="time-outline" size={18} color={theme.colors.primary} />;
+  };
+
+  const getReminderMode = (medicine) => {
+    const cfg = medicine?.reminderConfig || {};
+    const raw = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : null);
+    if (raw === 'prn') return 'fixed_times';
+    return raw || 'fixed_times';
+  };
+
+  const formatHalfHourCountdown = (minutes) => {
+    const rounded = Math.ceil(Math.max(0, minutes) / 30) * 30;
+    if (rounded <= 0) return '即将提醒';
+    const hours = Math.floor(rounded / 60);
+    const mins = rounded % 60;
+    if (hours > 0 && mins > 0) return `距下次约 ${hours} 小时 ${mins} 分钟`;
+    if (hours > 0) return `距下次约 ${hours} 小时`;
+    return `距下次约 ${mins} 分钟`;
+  };
+
+  const getIntervalNextText = (medicine) => {
+    const cfg = medicine?.reminderConfig || {};
+    const intervalHours = Math.max(1, Number(cfg.intervalHours || 8));
+    const startText = parseHHMM(cfg.intervalStartTime) || '08:00';
+    const [startH, startM] = startText.split(':').map((x) => Number(x));
+    const now = new Date(reminderTick);
+    const nowMinutes = now.getHours() * 60 + now.getMinutes();
+    let nextMinutes = startH * 60 + startM;
+    if (nowMinutes >= nextMinutes) {
+      const step = Math.floor((nowMinutes - nextMinutes) / (intervalHours * 60)) + 1;
+      nextMinutes += step * intervalHours * 60;
+    }
+    return formatHalfHourCountdown(nextMinutes - nowMinutes);
   };
 
   const requestPermissions = async () => {
@@ -192,6 +226,22 @@ export default function MedicineScreen() {
   };
 
   const loadMedicines = async () => {
+    // 首次进入下拉一次；后续仅在云端 revision 变化时再下拉，避免本地删除被旧快照回滚。
+    try {
+      const localMeta = await CloudSyncService.getCloudMeta();
+      const remoteMeta = await CloudSyncService.refreshCloudMeta();
+      const localRevision = Number(localMeta?.revision || 0);
+      const remoteRevision = Number(remoteMeta?.revision || 0);
+      const shouldSyncDown =
+        !hasInitialCloudPullRef.current ||
+        (remoteRevision > 0 && remoteRevision !== localRevision);
+      if (shouldSyncDown) {
+        await CloudSyncService.syncDown();
+      }
+      hasInitialCloudPullRef.current = true;
+    } catch (e) {
+      console.warn('药品页云端同步失败，改用本地缓存:', e?.message || e);
+    }
     try {
       await MedicineService.fillMissingReminderSchedules();
     } catch (e) {
@@ -265,6 +315,22 @@ export default function MedicineScreen() {
       setCareMedicineTarget(medicine);
       setCareAccountsPick(list);
       setSelectedCareUserId(list[0].userId);
+      // 关怀提醒采用可独立配置：默认按当前药品配置预填，用户可在弹窗中修改。
+      const cfg = medicine?.reminderConfig || {};
+      const modeRaw = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : 'fixed_times');
+      setReminderMode(modeRaw === 'prn' ? 'fixed_times' : modeRaw);
+      const rawTimes = Array.isArray(cfg.times) && cfg.times.length ? cfg.times : [];
+      const normalizedTimes = [...new Set(rawTimes.map((t) => parseHHMM(t)).filter(Boolean))].sort();
+      setReminderTimesList(normalizedTimes);
+      setTimesPerDay(String(cfg.timesPerDay || '2'));
+      setIntervalHours(String(cfg.intervalHours || '8'));
+      setIntervalStartTime(parseHHMM(String(cfg.intervalStartTime || '08:00')) || '08:00');
+      setMealTag(String(cfg.mealTag || 'none'));
+      setDoseAmount(String(cfg.doseAmount || (medicine.dosage?.match(/([0-9]+(?:\.[0-9]+)?)/)?.[1] || '1')));
+      setDoseUnit(String(cfg.doseUnit || (medicine.dosage?.match(/([^\d\s/]+)\s*$/)?.[1] || '片')));
+      const today = new Date().toISOString().split('T')[0];
+      setTherapyStartDate(cfg.startDate || today);
+      setTherapyEndDate(cfg.endDate || '');
       setCarePushVisible(true);
     } catch (e) {
       Alert.alert('失败', e?.message || '无法读取关怀账号');
@@ -272,26 +338,91 @@ export default function MedicineScreen() {
   };
 
   const confirmCareMedicinePush = async () => {
-    if (!careMedicineTarget || !selectedCareUserId) return;
+    if (!careMedicineTarget) {
+      Alert.alert('提示', '未找到要下发的药品信息，请重新打开关怀提醒设置。');
+      return;
+    }
+    if (!selectedCareUserId) {
+      Alert.alert('提示', '请先选择一个关怀对象。');
+      return;
+    }
     const acc = careAccountsPick.find((a) => a.userId === selectedCareUserId);
     if (!acc) return;
     const medName = careMedicineTarget.name;
+
+    const confirmOverwriteIfNeeded = async () => {
+      const conflict = await CareAccountService.inspectCareMedicineConflict(acc, careMedicineTarget);
+      if (!conflict?.exists) return true;
+      const msg = `已对「${conflict.medicineName || medName}」下发过提醒，是否覆盖之前的提醒设置？`;
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.confirm === 'function') {
+        return Boolean(window.confirm(msg));
+      }
+      return new Promise((resolve) => {
+        Alert.alert('重复下发提醒', msg, [
+          { text: '取消', style: 'cancel', onPress: () => resolve(false) },
+          { text: '覆盖', onPress: () => resolve(true) },
+        ]);
+      });
+    };
+
+    const overwrite = await confirmOverwriteIfNeeded();
+    if (!overwrite) return;
+
     setCarePushLoading(true);
     try {
+      const careReminderConfig = {
+        enabled: true,
+        paused: false,
+        mode: reminderMode,
+        mealTag,
+        doseAmount: Number(doseAmount),
+        doseUnit: String(doseUnit || '').trim(),
+        startDate: therapyStartDate || undefined,
+        endDate: therapyEndDate || undefined,
+      };
+      if (reminderMode === 'fixed_times') {
+        const fixedTimes = [...new Set((reminderTimesList || []).map((t) => parseHHMM(t)).filter(Boolean))].sort();
+        careReminderConfig.times = fixedTimes;
+      } else if (reminderMode === 'times_per_day') {
+        careReminderConfig.timesPerDay = Number(timesPerDay || 2);
+        careReminderConfig.times = undefined;
+      } else if (reminderMode === 'interval_hours') {
+        if (!intervalHours || Number(intervalHours) <= 0) {
+          throw new Error('请填写有效的间隔小时（1-24）');
+        }
+        if (!intervalStartTime || !parseHHMM(intervalStartTime)) {
+          throw new Error('请选择有效的起始时间（HH:MM）');
+        }
+        careReminderConfig.intervalHours = Number(intervalHours);
+        careReminderConfig.intervalStartTime = parseHHMM(intervalStartTime);
+        careReminderConfig.times = undefined;
+      }
+      if (reminderMode === 'fixed_times' && (!Array.isArray(careReminderConfig.times) || careReminderConfig.times.length === 0)) {
+        throw new Error('请至少添加 1 个定点提醒时间');
+      }
       const caregiver = await AuthService.getProfile();
-      await CareAccountService.mergeMedicineTemplateIntoCareCloud(
+      const result = await CareAccountService.mergeMedicineTemplateIntoCareCloud(
         acc,
         careMedicineTarget,
         caregiver?.email || '',
+        { reminderConfig: careReminderConfig, overwriteExisting: overwrite },
       );
       setCarePushVisible(false);
       setCareMedicineTarget(null);
+      setCareAccountsPick([]);
+      setSelectedCareUserId(null);
       Alert.alert(
         '已同步',
-        `已将「${medName}」的用药模板写入 ${acc.name} 的云端。请对方在本人设备登录并同步云端数据，稍后在药品页即可看到并收到提醒。`,
+        result?.action === 'updated'
+          ? `已覆盖 ${acc.name} 的「${medName}」提醒设置，并同步到其药品提醒。`
+          : `已将「${medName}」写入 ${acc.name} 的关怀药品，并按你在本弹窗设置的提醒规则保存。`,
       );
     } catch (e) {
-      Alert.alert('同步失败', e?.message || '请稍后重试');
+      if (e?.code === 'CARE_MEDICINE_DUPLICATE') {
+        Alert.alert('提示', e?.message || '该药品已存在，请选择覆盖后再试。');
+      } else {
+        Alert.alert('同步失败', e?.message || '请稍后重试');
+      }
     } finally {
       setCarePushLoading(false);
     }
@@ -300,13 +431,10 @@ export default function MedicineScreen() {
   const openReminderSettings = (medicine) => {
     setActiveMedicineForSettings(medicine);
     const cfg = medicine.reminderConfig || {};
-    setReminderEnabled(cfg.enabled !== false);
-    setReminderPaused(cfg.paused === true);
-    setReminderMode(cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : 'fixed_times'));
-    const rawTimes = Array.isArray(cfg.times) && cfg.times.length ? cfg.times : null;
-    const normalizedTimes = rawTimes
-      ? [...new Set(rawTimes.map((t) => parseHHMM(t)).filter(Boolean))].sort()
-      : ['08:00', '20:00'];
+    const modeRaw = cfg.mode || (Array.isArray(cfg.times) && cfg.times.length ? 'fixed_times' : 'fixed_times');
+    setReminderMode(modeRaw === 'prn' ? 'fixed_times' : modeRaw);
+    const rawTimes = Array.isArray(cfg.times) && cfg.times.length ? cfg.times : [];
+    const normalizedTimes = [...new Set(rawTimes.map((t) => parseHHMM(t)).filter(Boolean))].sort();
     setReminderTimesList(normalizedTimes);
     setTimesPerDay(String(cfg.timesPerDay || '2'));
     setIntervalHours(String(cfg.intervalHours || '8'));
@@ -330,8 +458,8 @@ export default function MedicineScreen() {
     }
     try {
       const patch = {
-        enabled: reminderEnabled,
-        paused: reminderPaused,
+        enabled: true,
+        paused: false,
         mode: reminderMode,
         mealTag,
         doseAmount: Number(doseAmount),
@@ -341,7 +469,8 @@ export default function MedicineScreen() {
       };
 
       if (reminderMode === 'fixed_times') {
-        const vt = validateTimesText(reminderTimesList.join(','));
+        const fixedTimes = [...new Set((reminderTimesList || []).map((t) => parseHHMM(t)).filter(Boolean))].sort();
+        const vt = validateTimesText(fixedTimes.join(','));
         if (!vt.ok) {
           Alert.alert('提示', vt.message);
           return;
@@ -362,9 +491,6 @@ export default function MedicineScreen() {
         }
         patch.intervalHours = Number(intervalHours);
         patch.intervalStartTime = parseHHMM(intervalStartTime);
-        patch.times = undefined;
-      } else if (reminderMode === 'prn') {
-        // 按需：不生成提醒，仅保留配置用于展示/统计
         patch.times = undefined;
       }
 
@@ -661,22 +787,9 @@ export default function MedicineScreen() {
   // 提醒设置表单主体（用于 Web/移动端不同滚动容器复用）
   const reminderSettingsForm = (
     <>
-      <View style={styles.switchRow}>
-        <Text>启用提醒</Text>
-        <Switch
-          value={reminderEnabled && !reminderPaused}
-          onValueChange={(value) => {
-            if (value) {
-              // 开启：启用且不暂停
-              setReminderEnabled(true);
-              setReminderPaused(false);
-            } else {
-              // 关闭：暂停提醒（保持启用状态，只是暂停）
-              setReminderPaused(true);
-            }
-          }}
-        />
-      </View>
+      <Paragraph style={[styles.hintText, { marginTop: 0 }]}>
+        提醒默认启用：保存后将按下方规则生成今日与后续提醒。
+      </Paragraph>
 
       <SegmentedButtons
         value={reminderMode}
@@ -685,7 +798,6 @@ export default function MedicineScreen() {
           { value: 'fixed_times', label: '定点' },
           { value: 'times_per_day', label: '每日N次' },
           { value: 'interval_hours', label: '间隔' },
-          { value: 'prn', label: '按需' },
         ]}
         style={{ marginBottom: theme.spacing.md }}
       />
@@ -759,11 +871,6 @@ export default function MedicineScreen() {
             style={styles.input}
           />
         </>
-      )}
-      {reminderMode === 'prn' && (
-        <Paragraph style={styles.hintText}>
-          按需用药：不会生成系统提醒，但会保留用药方案信息用于展示和历史统计。
-        </Paragraph>
       )}
 
       <SegmentedButtons
@@ -934,6 +1041,13 @@ export default function MedicineScreen() {
       
       // 保存识别结果
       setRecognitionResult(recognizedData);
+      const topCandidates = (recognizedData.candidates || []).slice(0, 3);
+      if (recognizedData.confidence === 'low' && topCandidates.length > 0) {
+        setCandidateList(topCandidates);
+        setCandidateDialogVisible(true);
+        setRecognizing(false);
+        return;
+      }
       
       // 如果查询到详细的药品信息，保存起来
       if (recognizedData.hasDetails) {
@@ -954,22 +1068,41 @@ export default function MedicineScreen() {
         setRecognizing(false);
         setErrorMessage('未能识别出药品信息，请确保图片清晰且包含药品名称');
         setErrorDialogVisible(true);
-        setManualEntryMode(false);
       }
     } catch (error) {
       console.error('OCR识别错误:', error);
       setRecognizing(false);
       setErrorMessage(error.message || '无法识别图片，请检查网络连接后重试');
       setErrorDialogVisible(true);
-      setManualEntryMode(false);
     }
+  };
+
+  const applyCandidateSelection = (candidate) => {
+    const merged = MedicineService.finalizeRecognitionCandidate(recognitionResult, candidate);
+    setRecognitionResult(merged);
+    setMedicineDetails(merged);
+    setCandidateDialogVisible(false);
+    setDetailsDialogVisible(true);
+  };
+
+  const fallbackToOcrOnly = () => {
+    const fallback = {
+      ...(recognitionResult || {}),
+      candidates: [],
+      needsCandidateConfirm: false,
+      confidence: 'low',
+      hasDetails: false,
+    };
+    setRecognitionResult(fallback);
+    setMedicineDetails(fallback);
+    setCandidateDialogVisible(false);
+    Alert.alert('提示', '已切换为仅 OCR 结果，请结合说明书核对后再保存。');
   };
 
   const saveMedicine = async () => {
     const canUseRecognition = recognitionResult && recognitionResult.name;
-    const canUseManual = manualEntryMode && manualName;
-    if (!canUseRecognition && !canUseManual) {
-      Alert.alert('提示', '请先识别药品信息，或选择手动录入');
+    if (!canUseRecognition) {
+      Alert.alert('提示', '请先完成药品识别并匹配数据库信息');
       return;
     }
 
@@ -979,25 +1112,19 @@ export default function MedicineScreen() {
     }
 
     try {
-      const medicineName = canUseRecognition ? recognitionResult.name : manualName;
-      const dosage = canUseRecognition
-        ? (recognitionResult.dosage || '每次1片')
-        : (manualDosage || '每次1片');
-      const frequency = canUseRecognition
-        ? (recognitionResult.frequency || '每日2次')
-        : (manualFrequency || '每日2次');
-      const leafletFields = canUseRecognition
-        ? {
-            indication: recognitionResult.indication || '',
-            contraindication: recognitionResult.contraindication || '',
-            usage: recognitionResult.usage || '',
-            sideEffects: recognitionResult.sideEffects || '',
-            precautions: recognitionResult.precautions || '',
-            interactions: recognitionResult.interactions || '',
-            storage: recognitionResult.storage || '',
-            description: recognitionResult.description || '',
-          }
-        : {};
+      const medicineName = recognitionResult.name;
+      const dosage = recognitionResult.dosage || '每次1片';
+      const frequency = recognitionResult.frequency || '每日2次';
+      const leafletFields = {
+        indication: recognitionResult.indication || '',
+        contraindication: recognitionResult.contraindication || '',
+        usage: recognitionResult.usage || '',
+        sideEffects: recognitionResult.sideEffects || '',
+        precautions: recognitionResult.precautions || '',
+        interactions: recognitionResult.interactions || '',
+        storage: recognitionResult.storage || '',
+        description: recognitionResult.description || '',
+      };
 
       // 持久化图片：Web 端转 dataURL；Native 端拷贝到 documentDirectory，
       // 避免保存后因临时文件/Blob 失效导致列表中缩略图空白。
@@ -1005,23 +1132,10 @@ export default function MedicineScreen() {
       const coverImage = persistedImages[0] || selectedImages[0];
 
       if (editingMedicine) {
-        // 更新现有药品
-        const updatedMedicine = {
-          name: medicineName,
-          dosage,
-          frequency,
-          ...leafletFields,
-          images: persistedImages,
-          image: coverImage,
-        };
-        await MedicineService.updateMedicine(editingMedicine.id, updatedMedicine);
-        Alert.alert('成功', '药品信息已更新，提醒已重新设置');
+        // 禁止手工编辑：编辑入口改为查看详情，此分支仅作兼容保护。
+        Alert.alert('提示', '药品信息为数据库匹配结果，不支持手工修改。');
       } else {
         // 添加新药品
-        if (!canUseRecognition) {
-          const vn = validateMedicineName(medicineName);
-          if (!vn.ok) throw new Error(vn.message);
-        }
         const medicine = {
           id: Date.now().toString(),
           name: medicineName,
@@ -1032,26 +1146,24 @@ export default function MedicineScreen() {
           image: coverImage,
           createdAt: new Date().toISOString(),
           reminderConfig: {
-            enabled: true,
+            enabled: false,
             paused: false,
-            times: ['08:00', '20:00'],
+            mode: 'fixed_times',
+            times: [],
           },
         };
         await MedicineService.saveMedicine(medicine);
-        await MedicineService.scheduleReminders(medicine);
-        Alert.alert('成功', '药品已添加，提醒已设置');
+        Alert.alert('成功', '药品已添加。当前未设置提醒时间，请在“提醒设置”中手动配置。');
       }
       
       setDialogVisible(false);
       setSourceDialogVisible(false);
       setSelectedImages([]);
       setRecognitionResult(null);
+      setCandidateDialogVisible(false);
+      setCandidateList([]);
       setMedicineDetails(null);
       setEditingMedicine(null);
-      setManualEntryMode(false);
-      setManualName('');
-      setManualDosage('');
-      setManualFrequency('');
       
       loadMedicines();
     } catch (error) {
@@ -1060,15 +1172,8 @@ export default function MedicineScreen() {
   };
 
   const editMedicine = (medicine) => {
-    setEditingMedicine(medicine);
-    setSelectedImages(medicine.images || (medicine.image ? [medicine.image] : []));
-    // 设置识别结果为现有药品信息
-    setRecognitionResult({
-      name: medicine.name || '',
-      dosage: medicine.dosage || '',
-      frequency: medicine.frequency || '',
-    });
-    setDialogVisible(true);
+    setMedicineDetails(medicine);
+    setDetailsDialogVisible(true);
   };
 
   const removeImage = (index) => {
@@ -1183,8 +1288,9 @@ export default function MedicineScreen() {
                       <TouchableOpacity 
                         onPress={() => editMedicine(medicine)}
                         style={styles.actionButton}
+                        accessibilityLabel="查看药品信息"
                       >
-                        <Ionicons name="create-outline" size={24} color={theme.colors.primary} />
+                        <Ionicons name="search-outline" size={24} color={theme.colors.primary} />
                       </TouchableOpacity>
                       <TouchableOpacity 
                         onPress={() => deleteMedicine(medicine.id)}
@@ -1212,68 +1318,85 @@ export default function MedicineScreen() {
                   {/* 今日提醒（闭环打卡） */}
                   <View style={styles.remindersContainer}>
                     <Text style={styles.remindersTitle}>今日提醒</Text>
-                    {(todayRemindersByMedicine[medicine.id] || []).length === 0 ? (
-                      <Text style={styles.remindersEmpty}>今日暂无提醒</Text>
-                    ) : (
-                      (todayRemindersByMedicine[medicine.id] || []).map((r) => (
-                        <View key={r.id} style={styles.reminderRow}>
-                          <Text style={styles.reminderTime}>{formatTime(r.scheduledAt)}</Text>
-                          <Chip
-                            style={styles.reminderStatusChip}
-                            icon={
-                              r.status === 'taken'
-                                ? 'check'
-                                : r.status === 'missed'
-                                  ? 'close'
-                                  : r.status === 'snoozed'
-                                    ? 'clock'
-                                    : 'bell'
-                            }
-                          >
-                            {r.status === 'taken'
-                              ? '已服'
-                              : r.status === 'missed'
-                                ? '漏服'
-                                : r.status === 'snoozed'
-                                  ? '稍后'
-                                  : '待服'}
-                          </Chip>
-
-                          {r.status === 'missed' && (
-                            <Button
-                              mode="text"
-                              compact
-                              onPress={() => showMakeupGuidance(medicine.id, r)}
-                              style={styles.reminderActionButton}
+                    {(() => {
+                      const mode = getReminderMode(medicine);
+                      const todayRows = todayRemindersByMedicine[medicine.id] || [];
+                      if (mode === 'times_per_day') {
+                        const totalCount =
+                          todayRows.length || Math.max(0, Number(medicine?.reminderConfig?.timesPerDay || 0));
+                        const remaining = todayRows.filter((r) => r.status !== 'taken').length;
+                        return (
+                          <Text style={styles.remindersEmpty}>
+                            今日还剩 {remaining} 次未服（共 {totalCount} 次）
+                          </Text>
+                        );
+                      }
+                      if (mode === 'interval_hours') {
+                        return <Text style={styles.remindersEmpty}>{getIntervalNextText(medicine)}</Text>;
+                      }
+                      return todayRows.length === 0 ? (
+                        <Text style={styles.remindersEmpty}>今日暂无提醒</Text>
+                      ) : (
+                        todayRows.map((r) => (
+                          <View key={r.id} style={styles.reminderRow}>
+                            <Text style={styles.reminderTime}>{formatTime(r.scheduledAt)}</Text>
+                            <Chip
+                              style={styles.reminderStatusChip}
+                              icon={
+                                r.status === 'taken'
+                                  ? 'check'
+                                  : r.status === 'missed'
+                                    ? 'close'
+                                    : r.status === 'snoozed'
+                                      ? 'clock'
+                                      : 'bell'
+                              }
                             >
-                              补服指导
-                            </Button>
-                          )}
+                              {r.status === 'taken'
+                                ? '已服'
+                                : r.status === 'missed'
+                                  ? '漏服'
+                                  : r.status === 'snoozed'
+                                    ? '稍后'
+                                    : '待服'}
+                            </Chip>
 
-                          {(r.status === 'scheduled' || r.status === 'snoozed') && (
-                            <View style={styles.reminderActions}>
+                            {r.status === 'missed' && (
                               <Button
-                                mode="outlined"
+                                mode="text"
                                 compact
-                                onPress={() => markTaken(medicine.id, r.id)}
+                                onPress={() => showMakeupGuidance(medicine.id, r)}
                                 style={styles.reminderActionButton}
                               >
-                                已服
+                                补服指导
                               </Button>
-                              <Button
-                                mode="outlined"
-                                compact
-                                disabled={Platform.OS === 'web'}
-                                onPress={() => snoozePick(medicine.id, r.id)}
-                                style={styles.reminderActionButton}
-                              >
-                                稍后...
-                              </Button>
-                            </View>
-                          )}
-                        </View>
-                      ))
-                    )}
+                            )}
+
+                            {(r.status === 'scheduled' || r.status === 'snoozed') && (
+                              <View style={styles.reminderActions}>
+                                <Button
+                                  mode="outlined"
+                                  compact
+                                  onPress={() => markTaken(medicine.id, r.id)}
+                                  style={styles.reminderActionButton}
+                                >
+                                  已服
+                                </Button>
+                                <Button
+                                  mode="outlined"
+                                  compact
+                                  disabled={Platform.OS === 'web'}
+                                  onPress={() => snoozePick(medicine.id, r.id)}
+                                  style={styles.reminderActionButton}
+                                >
+                                  稍后...
+                                </Button>
+                              </View>
+                            )}
+                          </View>
+                        ))
+                      );
+                    })()}
                   </View>
 
                   <View style={styles.reminderFooterActions}>
@@ -1311,6 +1434,7 @@ export default function MedicineScreen() {
         {/* 确认药品信息对话框 */}
         <Dialog 
           visible={dialogVisible} 
+          style={styles.sheetDialog}
           onDismiss={() => {
             setDialogVisible(false);
             setSelectedImages([]);
@@ -1319,13 +1443,11 @@ export default function MedicineScreen() {
             setSelectedImageForOCR(null);
             setRecognizing(false);
             setRecognitionResult(null);
-            setManualEntryMode(false);
-            setManualName('');
-            setManualDosage('');
-            setManualFrequency('');
+            setCandidateDialogVisible(false);
+            setCandidateList([]);
           }}
         >
-          <Dialog.Title>{editingMedicine ? '编辑药品信息' : '确认药品信息'}</Dialog.Title>
+          <Dialog.Title style={styles.sheetTitle}>药品信息</Dialog.Title>
           <Dialog.Content>
             {recognizing && (
               <View style={styles.recognizingContainer}>
@@ -1376,22 +1498,6 @@ export default function MedicineScreen() {
               </Button>
             )}
 
-            {/* 识别失败/无结果时可切换为手动录入 */}
-            {selectedImages.length > 0 && !recognizing && !manualEntryMode && !(recognitionResult && recognitionResult.name) && (
-              <Button
-                mode="outlined"
-                icon="pencil"
-                onPress={() => {
-                  setManualEntryMode(true);
-                  // 预填默认值
-                  setManualDosage('每次1片');
-                  setManualFrequency('每日2次');
-                }}
-                style={styles.manualEntryButton}
-              >
-                手动录入
-              </Button>
-            )}
 
             {/* 显示识别结果 */}
             {recognitionResult && recognitionResult.name && (
@@ -1407,44 +1513,6 @@ export default function MedicineScreen() {
               </View>
             )}
 
-            {/* 手动录入表单（兜底） */}
-            {manualEntryMode && (
-              <View style={styles.manualFormContainer}>
-                <Text style={styles.manualFormTitle}>手动录入药品信息</Text>
-                <TextInput
-                  label="药品名称"
-                  value={manualName}
-                  onChangeText={setManualName}
-                  mode="outlined"
-                  style={styles.input}
-                />
-                <TextInput
-                  label="服用剂量（可选）"
-                  value={manualDosage}
-                  onChangeText={setManualDosage}
-                  mode="outlined"
-                  style={styles.input}
-                />
-                <TextInput
-                  label="服用频率（可选）"
-                  value={manualFrequency}
-                  onChangeText={setManualFrequency}
-                  mode="outlined"
-                  style={styles.input}
-                />
-                <Button
-                  mode="text"
-                  onPress={() => {
-                    setManualEntryMode(false);
-                    setManualName('');
-                    setManualDosage('');
-                    setManualFrequency('');
-                  }}
-                >
-                  取消手动录入
-                </Button>
-              </View>
-            )}
           </Dialog.Content>
           <Dialog.Actions>
             <Button 
@@ -1454,10 +1522,8 @@ export default function MedicineScreen() {
                 setEditingMedicine(null);
                 setMedicineDetails(null);
                 setRecognitionResult(null);
-                setManualEntryMode(false);
-                setManualName('');
-                setManualDosage('');
-                setManualFrequency('');
+                setCandidateDialogVisible(false);
+                setCandidateList([]);
               }}
             >
               取消
@@ -1465,16 +1531,20 @@ export default function MedicineScreen() {
             <Button 
               onPress={saveMedicine} 
               mode="contained"
-              disabled={!((recognitionResult && recognitionResult.name) || (manualEntryMode && manualName))}
+              disabled={!(recognitionResult && recognitionResult.name)}
             >
-              {editingMedicine ? '更新' : '保存'}
+              保存
             </Button>
           </Dialog.Actions>
         </Dialog>
 
         {/* 选择图片来源对话框（需在编辑对话框之后渲染，确保显示在最顶层） */}
-        <Dialog visible={sourceDialogVisible} onDismiss={() => setSourceDialogVisible(false)}>
-          <Dialog.Title>选择图片来源</Dialog.Title>
+        <Dialog
+          visible={sourceDialogVisible}
+          style={styles.sheetDialog}
+          onDismiss={() => setSourceDialogVisible(false)}
+        >
+          <Dialog.Title style={styles.sheetTitle}>选择图片来源</Dialog.Title>
           <Dialog.Content>
             <Paragraph style={styles.dialogText}>
               当前已选择 {selectedImages.length}/9 张图片
@@ -1496,34 +1566,52 @@ export default function MedicineScreen() {
         {/* 错误提示对话框 */}
         <Dialog
           visible={errorDialogVisible}
+          style={styles.sheetDialog}
           onDismiss={() => setErrorDialogVisible(false)}
         >
-          <Dialog.Title>提示</Dialog.Title>
+          <Dialog.Title style={styles.sheetTitle}>提示</Dialog.Title>
           <Dialog.Content>
             <Paragraph>{errorMessage}</Paragraph>
           </Dialog.Content>
           <Dialog.Actions>
-            <Button
-              onPress={() => {
-                setErrorDialogVisible(false);
-                // 在识别失败时，允许用户直接进入手动录入
-                setManualEntryMode(true);
-                setManualDosage('每次1片');
-                setManualFrequency('每日2次');
-              }}
-            >
-              手动录入
-            </Button>
             <Button onPress={() => setErrorDialogVisible(false)}>关闭</Button>
+          </Dialog.Actions>
+        </Dialog>
+
+        <Dialog
+          visible={candidateDialogVisible}
+          style={styles.sheetDialog}
+          onDismiss={() => setCandidateDialogVisible(false)}
+        >
+          <Dialog.Title style={styles.sheetTitle}>请选择匹配药品</Dialog.Title>
+          <Dialog.Content>
+            <Paragraph style={styles.dialogText}>当前识别置信度较低，请从候选中确认：</Paragraph>
+            {(candidateList || []).map((item, idx) => (
+              <Button
+                key={`${item.name || 'candidate'}_${idx}`}
+                mode="outlined"
+                style={{ marginBottom: 8 }}
+                onPress={() => applyCandidateSelection(item)}
+              >
+                {`${idx + 1}. ${item.name || '未知药品'} ${item.specification ? `｜${item.specification}` : ''} ${
+                  item.manufacturer ? `｜${item.manufacturer}` : ''
+                } ${item.matchScore ? `｜分数 ${item.matchScore}` : ''}`}
+              </Button>
+            ))}
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={fallbackToOcrOnly}>仍不正确</Button>
+            <Button onPress={() => setCandidateDialogVisible(false)}>稍后再选</Button>
           </Dialog.Actions>
         </Dialog>
 
         {/* 药品详情对话框 */}
         <Dialog
           visible={detailsDialogVisible}
+          style={styles.sheetDialog}
           onDismiss={() => setDetailsDialogVisible(false)}
         >
-          <Dialog.Title>药品详细信息</Dialog.Title>
+          <Dialog.Title style={styles.sheetTitle}>药品信息</Dialog.Title>
           <Dialog.Content>
             <ScrollView style={styles.detailsScrollView}>
               {medicineDetails && (
@@ -1694,14 +1782,9 @@ export default function MedicineScreen() {
         <Dialog 
           visible={reminderSettingsVisible} 
           onDismiss={() => setReminderSettingsVisible(false)}
-          style={Platform.OS === 'web' ? { 
-            maxWidth: '90vw', 
-            maxHeight: '90vh',
-            alignSelf: 'center',
-            margin: 'auto'
-          } : {}}
+          style={styles.sheetDialog}
         >
-          <Dialog.Title>提醒设置</Dialog.Title>
+          <Dialog.Title style={styles.sheetTitle}>提醒设置</Dialog.Title>
           <Dialog.Content
             style={
               Platform.OS === 'web'
@@ -1729,12 +1812,9 @@ export default function MedicineScreen() {
         <Dialog 
           visible={statsVisible} 
           onDismiss={() => setStatsVisible(false)}
-          style={Platform.OS === 'web' ? { 
-            alignSelf: 'center',
-            margin: 'auto'
-          } : {}}
+          style={styles.sheetDialog}
         >
-          <Dialog.Title>服药依从性统计（最近7天）</Dialog.Title>
+          <Dialog.Title style={styles.sheetTitle}>服药依从性统计（最近7天）</Dialog.Title>
           <Dialog.Content>
             {statsData ? (
               <View style={styles.statsContainer}>
@@ -1795,8 +1875,8 @@ export default function MedicineScreen() {
         </Dialog>
 
         {/* 库存/到期设置对话框 */}
-        <Dialog visible={stockDialogVisible} onDismiss={() => setStockDialogVisible(false)}>
-          <Dialog.Title>库存 / 到期 / 复购</Dialog.Title>
+        <Dialog visible={stockDialogVisible} onDismiss={() => setStockDialogVisible(false)} style={styles.sheetDialog}>
+          <Dialog.Title style={styles.sheetTitle}>库存 / 到期 / 复购</Dialog.Title>
           <Dialog.Content>
             <View style={styles.switchRow}>
               <Text>启用库存提示</Text>
@@ -1859,19 +1939,9 @@ export default function MedicineScreen() {
             setHistoryVisible(false);
             setHistoryStartDate('');
           }}
-          style={Platform.OS === 'web' ? { 
-            maxWidth: '90vw',
-            width: '800px',
-            alignSelf: 'center',
-            margin: 'auto'
-          } : {}}
+          style={styles.sheetDialog}
         >
-          <Dialog.Title>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="calendar-outline" size={22} color={theme.colors.primary} style={{ marginRight: 8 }} />
-              <Text>用药历史时间轴</Text>
-            </View>
-          </Dialog.Title>
+          <Dialog.Title style={styles.sheetTitle}>用药历史时间轴</Dialog.Title>
           <Dialog.Content>
             {activeMedicineForHistory && (
               <View style={styles.historyHeader}>
@@ -1950,8 +2020,8 @@ export default function MedicineScreen() {
         </Dialog>
 
         {/* 漏服补服指导对话框 */}
-        <Dialog visible={guidanceVisible} onDismiss={() => setGuidanceVisible(false)}>
-          <Dialog.Title>漏服补服指导</Dialog.Title>
+        <Dialog visible={guidanceVisible} onDismiss={() => setGuidanceVisible(false)} style={styles.sheetDialog}>
+          <Dialog.Title style={styles.sheetTitle}>漏服补服指导</Dialog.Title>
           <Dialog.Content>
             <ScrollView style={{ maxHeight: 360 }}>
               <Text style={{ fontSize: 14, lineHeight: 22, color: theme.colors.text }}>
@@ -1964,11 +2034,11 @@ export default function MedicineScreen() {
           </Dialog.Actions>
         </Dialog>
 
-        <Dialog visible={carePushVisible} onDismiss={() => !carePushLoading && setCarePushVisible(false)}>
-          <Dialog.Title>同步到关怀账号</Dialog.Title>
+        <Dialog visible={carePushVisible} onDismiss={() => !carePushLoading && setCarePushVisible(false)} style={styles.sheetDialog}>
+          <Dialog.Title style={styles.sheetTitle}>关怀提醒设置</Dialog.Title>
           <Dialog.Content>
             <Paragraph style={{ marginBottom: theme.spacing.sm }}>
-              将「{careMedicineTarget?.name || '—'}」的名称、剂量与提醒规则合并到对方云端快照。药盒图片不会上传；对方需在自己手机同步云端后即可看到并按规则生成服药提醒。
+              为「{careMedicineTarget?.name || '—'}」设置关怀提醒规则。这里的规则可独立于你自己的提醒设置，药盒图片不会上传；对方同步云端后即可看到药品信息并按此规则生成提醒。
             </Paragraph>
             <Text style={[textStyles.semi, { marginBottom: 6 }]}>选择关怀对象</Text>
             <ScrollView style={{ maxHeight: 220 }}>
@@ -1984,13 +2054,26 @@ export default function MedicineScreen() {
                 </Button>
               ))}
             </ScrollView>
+            <Divider style={{ marginVertical: theme.spacing.md }} />
+            {Platform.OS === 'web' ? (
+              <View>{reminderSettingsForm}</View>
+            ) : (
+              <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={false}>
+                {reminderSettingsForm}
+              </ScrollView>
+            )}
           </Dialog.Content>
           <Dialog.Actions>
             <Button onPress={() => !carePushLoading && setCarePushVisible(false)} disabled={carePushLoading}>
               取消
             </Button>
-            <Button mode="contained" loading={carePushLoading} onPress={confirmCareMedicinePush}>
-              确认同步
+            <Button
+              mode="contained"
+              loading={carePushLoading}
+              disabled={carePushLoading || !selectedCareUserId}
+              onPress={confirmCareMedicinePush}
+            >
+              保存到关怀账号
             </Button>
           </Dialog.Actions>
         </Dialog>
@@ -2208,6 +2291,18 @@ const styles = StyleSheet.create({
     right: -8,
     backgroundColor: theme.colors.surface,
     borderRadius: 12,
+  },
+  sheetDialog: {
+    maxWidth: 980,
+    width: '92%',
+    alignSelf: 'center',
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface,
+  },
+  sheetTitle: {
+    ...textStyles.title,
+    fontSize: 28,
+    color: theme.colors.text,
   },
   addMoreButton: {
     marginBottom: theme.spacing.md,

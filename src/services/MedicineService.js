@@ -1,6 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import * as FileSystem from 'expo-file-system';
 import { OCRService } from './OCRService';
+import { MedicineDBService } from './MedicineDBService';
 import { SecureStorage } from '../utils/secureStorage';
 import { Platform } from 'react-native';
 
@@ -330,6 +331,10 @@ export class MedicineService {
     try {
       // 调用真实的百度OCR API进行识别
       const result = await OCRService.recognizeMedicine(imageUri);
+      // 兼容旧调用：没有 confidence 时默认 high（表示可直接保存）
+      if (!result.confidence) {
+        return { ...result, confidence: result.hasDetails ? 'high' : 'low' };
+      }
       return result;
     } catch (error) {
       console.error('药品识别失败:', error);
@@ -344,6 +349,34 @@ export class MedicineService {
         throw new Error(`识别失败: ${errorMessage}。请检查网络连接或重试`);
       }
     }
+  }
+
+  static finalizeRecognitionCandidate(recognitionResult, candidateOrIndex) {
+    const base = recognitionResult || {};
+    const candidates = Array.isArray(base.candidates) ? base.candidates : [];
+    const chosen =
+      typeof candidateOrIndex === 'number'
+        ? candidates[candidateOrIndex]
+        : candidateOrIndex;
+    if (!chosen || !chosen.hasDetails) {
+      return {
+        ...base,
+        hasDetails: false,
+        needsCandidateConfirm: false,
+      };
+    }
+    const merged = MedicineDBService.mergeResults(base, chosen, chosen);
+    return {
+      ...merged,
+      confidence: 'high',
+      needsCandidateConfirm: false,
+      selectedCandidate: chosen,
+      matchMeta: {
+        ...(base.matchMeta || {}),
+        mode: 'candidate_selected',
+        matchScore: chosen.matchScore ?? base?.matchMeta?.matchScore ?? null,
+      },
+    };
   }
 
   /**
@@ -546,10 +579,11 @@ export class MedicineService {
         : [];
       
       const pushReminder = async (reminderTime) => {
-        if (reminderTime < now) return;
+        const isPast = reminderTime.getTime() < now.getTime();
+        const isOverdue = reminderTime.getTime() + OVERDUE_GRACE_MINUTES * 60 * 1000 < now.getTime();
         const reminderId = `${medicine.id}_${reminderTime.toISOString()}`;
         let notificationId = null;
-        if (Platform.OS !== 'web') {
+        if (!isPast && Platform.OS !== 'web') {
           notificationId = await Notifications.scheduleNotificationAsync({
             content: {
               title: '💊 服药提醒',
@@ -572,8 +606,9 @@ export class MedicineService {
           medicineId: medicine.id,
           scheduledAt: reminderTime.toISOString(),
           notificationId,
-          status: 'scheduled',
+          status: isOverdue ? 'missed' : 'scheduled',
           createdAt: new Date().toISOString(),
+          ...(isOverdue ? { missedAt: new Date().toISOString() } : {}),
           snoozeCount: 0,
           mealTag: cfg.mealTag || DEFAULT_MEAL_TAG,
           doseAmount: cfg.doseAmount ?? null,

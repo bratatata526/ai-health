@@ -14,6 +14,51 @@ const MED_GUIDE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 天
  * 负责处理图片识别、Token管理等
  */
 export class OCRService {
+  static normalizeOcrText(text) {
+    const s = String(text || '');
+    if (!s) return '';
+    return s
+      .replace(/[，、]/g, ',')
+      .replace(/[：]/g, ':')
+      .replace(/[（]/g, '(')
+      .replace(/[）]/g, ')')
+      .replace(/[【]/g, '[')
+      .replace(/[】]/g, ']')
+      .replace(/([0-9])O(?=[0-9mgMG])/g, '$10')
+      .replace(/([0-9])I(?=[0-9mgMG])/g, '$11')
+      .replace(/([A-Za-z])0([A-Za-z])/g, '$1O$2')
+      .replace(/([A-Za-z])1([A-Za-z])/g, '$1I$2')
+      .replace(/\s+/g, ' ')
+      .replace(/[^\S\r\n]+/g, ' ')
+      .trim();
+  }
+
+  static buildNameCandidatesFromLines(lines = []) {
+    const suffixPattern = /[\u4e00-\u9fa5A-Za-z0-9·\-]{2,30}(片|胶囊|颗粒|滴丸|丸|散|口服液|糖浆|注射液|凝胶|喷雾剂|乳膏|贴膏)$/;
+    const prefixPattern = /^(复方|阿莫西林|布洛芬|头孢|氯雷他定|对乙酰氨基酚|维生素|银黄|板蓝根)/;
+    const out = [];
+    const seen = new Set();
+    for (const raw of lines) {
+      const line = this.normalizeOcrText(raw);
+      if (!line) continue;
+      const parts = line
+        .split(/[\s,;；、]+/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      for (const part of parts) {
+        const p = part.replace(/[()（）\[\]【】]/g, '');
+        if (!p) continue;
+        if (suffixPattern.test(p) || (prefixPattern.test(p) && p.length >= 3 && p.length <= 18)) {
+          if (!seen.has(p)) {
+            seen.add(p);
+            out.push(p);
+          }
+        }
+      }
+    }
+    return out.slice(0, 8);
+  }
+
   static async getCachedMedicineGuide(name) {
     try {
       const key = `${MED_GUIDE_CACHE_PREFIX}${String(name || '').trim()}`;
@@ -301,41 +346,48 @@ export class OCRService {
           dosage: '',
           frequency: '',
           rawText: '',
+          nameCandidates: [],
+          ocrConfidenceHints: null,
         };
       }
 
       // 合并所有识别的文字
-      const allText = ocrResult.words_result
-        .map(item => item.words)
-        .join('\n');
+      const lines = ocrResult.words_result
+        .map((item) => this.normalizeOcrText(item.words))
+        .filter(Boolean);
+      const allText = lines.join('\n');
+      const normalizedFlatText = this.normalizeOcrText(lines.join(' '));
 
       // 提取药品名称（通常在开头，包含"片"、"胶囊"、"颗粒"等）
       const namePatterns = [
-        /([\u4e00-\u9fa5]+(?:片|胶囊|颗粒|丸|散|液|膏|贴|栓|注射剂|注射液))/,
-        /([\u4e00-\u9fa5]{2,10}(?:片|胶囊|颗粒))/,
-        /([\u4e00-\u9fa5]{3,15})/,
+        /([\u4e00-\u9fa5A-Za-z0-9·\-]{2,30}(?:片|胶囊|颗粒|滴丸|丸|散|口服液|糖浆|注射液|凝胶|喷雾剂|乳膏|贴膏))/,
+        /([\u4e00-\u9fa5A-Za-z0-9·\-]{2,22}(?:缓释|控释|肠溶)?(?:片|胶囊|颗粒))/,
       ];
 
       let medicineName = '';
       for (const pattern of namePatterns) {
-        const match = allText.match(pattern);
+        const match = normalizedFlatText.match(pattern);
         if (match && match[1]) {
           medicineName = match[1].trim();
           break;
         }
       }
+      const nameCandidates = this.buildNameCandidatesFromLines(lines);
+      if (!medicineName && nameCandidates.length > 0) {
+        medicineName = nameCandidates[0];
+      }
 
       // 提取剂量（包含"每次"、"一次"、"1片"、"2粒"等）
       const dosagePatterns = [
-        /每次\s*(\d+)\s*(?:片|粒|粒|毫升|ml|mg|g)/i,
-        /一次\s*(\d+)\s*(?:片|粒|粒|毫升|ml|mg|g)/i,
-        /(\d+)\s*(?:片|粒|粒|毫升|ml|mg|g)\s*\/\s*次/i,
-        /(\d+)\s*(?:片|粒|粒|毫升|ml|mg|g)/,
+        /每次\s*([0-9]+(?:\.[0-9]+)?)\s*(?:片|粒|粒|毫升|ml|mg|g)/i,
+        /一次\s*([0-9]+(?:\.[0-9]+)?)\s*(?:片|粒|粒|毫升|ml|mg|g)/i,
+        /([0-9]+(?:\.[0-9]+)?)\s*(?:片|粒|粒|毫升|ml|mg|g)\s*\/\s*次/i,
+        /([0-9]+(?:\.[0-9]+)?)\s*(?:片|粒|粒|毫升|ml|mg|g)/,
       ];
 
       let dosage = '';
       for (const pattern of dosagePatterns) {
-        const match = allText.match(pattern);
+        const match = normalizedFlatText.match(pattern);
         if (match) {
           const unit = match[0].match(/(片|粒|毫升|ml|mg|g)/i)?.[0] || '片';
           dosage = `每次${match[1]}${unit}`;
@@ -353,7 +405,7 @@ export class OCRService {
 
       let frequency = '';
       for (const pattern of frequencyPatterns) {
-        const match = allText.match(pattern);
+        const match = normalizedFlatText.match(pattern);
         if (match) {
           const times = match[1] || match[2] || '2';
           frequency = `每日${times}次`;
@@ -364,7 +416,7 @@ export class OCRService {
       // 如果没有找到频率，尝试查找其他模式
       if (!frequency) {
         const simplePattern = /(\d+)\s*次/i;
-        const match = allText.match(simplePattern);
+        const match = normalizedFlatText.match(simplePattern);
         if (match) {
           frequency = `每日${match[1]}次`;
         } else {
@@ -377,11 +429,29 @@ export class OCRService {
         dosage = '每次1片';
       }
 
+      const specificationTokens = [];
+      const specMatch = normalizedFlatText.match(/([0-9]+(?:\.[0-9]+)?\s*(mg|g|ml|毫克|克|毫升))/gi) || [];
+      specMatch.forEach((m) => specificationTokens.push(this.normalizeOcrText(m).toLowerCase()));
+      const manufacturerTokens = [];
+      const manuMatch =
+        normalizedFlatText.match(/([\u4e00-\u9fa5A-Za-z]{2,20}(制药|药业|药厂|生物|医药))/g) || [];
+      manuMatch.forEach((m) => manufacturerTokens.push(this.normalizeOcrText(m)));
+      const ocrConfidenceHints = {
+        lineCount: lines.length,
+        hasNameWithSuffix: Boolean(nameCandidates.find((n) => /(片|胶囊|颗粒|丸|散|液|膏|贴|注射液)$/.test(n))),
+        specificationTokens: Array.from(new Set(specificationTokens)).slice(0, 6),
+        manufacturerTokens: Array.from(new Set(manufacturerTokens)).slice(0, 4),
+      };
+
       return {
         name: medicineName,
         dosage: dosage,
         frequency: frequency,
         rawText: allText,
+        nameCandidates: medicineName
+          ? Array.from(new Set([medicineName, ...nameCandidates])).slice(0, 8)
+          : nameCandidates,
+        ocrConfidenceHints,
       };
     } catch (error) {
       console.error('提取药品信息失败:', error);
@@ -390,6 +460,8 @@ export class OCRService {
         dosage: '',
         frequency: '',
         rawText: '',
+        nameCandidates: [],
+        ocrConfidenceHints: null,
       };
     }
   }
@@ -399,6 +471,7 @@ export class OCRService {
    * 包括OCR识别和药物数据库查询
    */
   static async recognizeMedicine(imageUri) {
+    const startAt = Date.now();
     try {
       // 1. 调用OCR API识别文字
       const ocrResult = await this.recognizeText(imageUri);
@@ -408,12 +481,15 @@ export class OCRService {
       const ocrRawText = ocrMedicineInfo.rawText || '';
 
       // 3. 如果识别到药品名称，查询药物数据库获取详细信息
-      let dbMedicineInfo = null;
-      if (ocrMedicineInfo.name) {
-        console.log('OCR识别到药品名称，开始查询药物数据库:', ocrMedicineInfo.name);
+      let matched = null;
+      if (ocrMedicineInfo.name || (ocrMedicineInfo.nameCandidates && ocrMedicineInfo.nameCandidates.length > 0)) {
+        console.log('OCR识别到候选名称，开始查询药物数据库:', ocrMedicineInfo.nameCandidates || ocrMedicineInfo.name);
         try {
-          dbMedicineInfo = await MedicineDBService.searchMedicine(ocrMedicineInfo.name);
-          console.log('药物数据库查询结果:', dbMedicineInfo);
+          matched = await MedicineDBService.searchMedicineWithCandidates(
+            ocrMedicineInfo.nameCandidates?.length ? ocrMedicineInfo.nameCandidates : [ocrMedicineInfo.name],
+            ocrMedicineInfo
+          );
+          console.log('药物数据库候选匹配结果:', matched);
         } catch (error) {
           console.warn('查询药物数据库失败，仅使用OCR结果:', error);
         }
@@ -422,10 +498,43 @@ export class OCRService {
       }
 
       // 4. 合并OCR结果和数据库查询结果
-      if (dbMedicineInfo && dbMedicineInfo.hasDetails) {
-        const merged = MedicineDBService.mergeResults(ocrMedicineInfo, dbMedicineInfo);
+      if (matched?.bestMatch?.hasDetails && matched?.confidence === 'high') {
+        const merged = MedicineDBService.mergeResults(ocrMedicineInfo, matched.bestMatch);
+        merged.matchMeta = {
+          confidence: matched.confidence,
+          matchScore: matched.bestMatch.matchScore ?? null,
+          candidateCount: matched.candidates?.length || 0,
+          mode: 'auto',
+        };
+        console.log('[ocr-recognize] complete', {
+          elapsedMs: Date.now() - startAt,
+          candidateCount: matched.candidates?.length || 0,
+          confidence: matched.confidence,
+        });
         console.log('合并后的药品信息:', merged);
         return merged;
+      }
+
+      if (matched?.bestMatch?.hasDetails && matched?.confidence !== 'high') {
+        console.log('[ocr-recognize] need candidate confirm', {
+          elapsedMs: Date.now() - startAt,
+          candidateCount: matched.candidates?.length || 0,
+          confidence: matched.confidence,
+        });
+        return {
+          ...ocrMedicineInfo,
+          hasDetails: false,
+          confidence: matched.confidence,
+          candidates: (matched.candidates || []).slice(0, 3),
+          bestMatch: matched.bestMatch,
+          needsCandidateConfirm: true,
+          matchMeta: {
+            confidence: matched.confidence,
+            matchScore: matched.bestMatch.matchScore ?? null,
+            candidateCount: matched.candidates?.length || 0,
+            mode: 'candidate_confirm',
+          },
+        };
       }
 
       // 5. 说明书接口缺失时：用 AI 生成简明说明（摘要）
@@ -465,10 +574,15 @@ export class OCRService {
 
       // 如果数据库查询失败/AI不可用，仅返回OCR结果
       console.log('返回OCR识别结果（无数据库/AI说明）:', ocrMedicineInfo);
+      console.log('[ocr-recognize] fallback ocr-only', {
+        elapsedMs: Date.now() - startAt,
+        candidateCount: 0,
+        confidence: 'low',
+      });
       return ocrMedicineInfo;
     } catch (error) {
       console.error('识别药品信息失败:', error);
-      throw error;
+      throw new Error(`药品识别流程失败: ${error?.message || '未知错误'}`);
     }
   }
 }

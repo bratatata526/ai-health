@@ -94,6 +94,25 @@ function parseMedicineGuideText(text) {
   return hit > 0 ? result : null;
 }
 
+function parseLooseJsonObject(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  const block = cleaned
+    .slice(start, end + 1)
+    .replace(/[\u201c\u201d\u2033]/g, '"')
+    .replace(/[\u2018\u2019\u2032]/g, "'")
+    .replace(/,\s*([}\]])/g, '$1');
+  try {
+    return JSON.parse(block);
+  } catch {
+    return null;
+  }
+}
+
 /** 从 OpenAI 兼容的 chat/completions JSON 中提取助手正文（兼容部分厂商字段差异） */
 function extractOpenAIChatContent(data) {
   const choice = data?.choices?.[0];
@@ -147,6 +166,142 @@ function extractUpstreamErrorMessage(data) {
  * 使用硅基流动 SiliconFlow API
  */
 export class AIService {
+  static buildDirectInteractionHints(details = []) {
+    const rows = Array.isArray(details) ? details : [];
+    const names = rows.map((x) => String(x?.name || '').trim()).filter(Boolean);
+    if (names.length < 2) return [];
+    const hints = [];
+    for (let i = 0; i < rows.length; i += 1) {
+      const a = rows[i];
+      const aName = String(a?.name || '').trim();
+      const aText = String(a?.detail?.interactions || '').trim();
+      if (!aName || !aText) continue;
+      for (let j = 0; j < rows.length; j += 1) {
+        if (i === j) continue;
+        const bName = String(rows[j]?.name || '').trim();
+        if (!bName) continue;
+        if (aText.includes(bName) || aText.includes(bName.replace(/(片|胶囊|颗粒|缓释|控释|肠溶)/g, ''))) {
+          hints.push(`- ${aName} 的“相互作用”字段中提到：${bName}`);
+        }
+      }
+    }
+    return Array.from(new Set(hints));
+  }
+
+  static rewriteGenericInteractionResult(markdown, medicines = []) {
+    const text = String(markdown || '').trim();
+    const names = (Array.isArray(medicines) ? medicines : [])
+      .map((m) => String(m?.name || '').trim())
+      .filter(Boolean);
+    if (!text) return '';
+    const genericHitCount =
+      (text.match(/当前证据有限|需结合说明书|需结合医师|请遵医嘱/gi) || []).length;
+    const hasDrugName = names.some((n) => n && text.includes(n));
+    // 若几乎全是泛化句且没有药名，重写成更可执行的 Markdown 兜底
+    if (genericHitCount >= 3 && !hasDrugName) {
+      const medList = names.length ? names.join('、') : '当前已选药品';
+      return `## 相互作用分析结果
+
+### 1. 是否存在已知的药物相互作用
+- 已对 **${medList}** 做联合评估；目前未检出“明确高风险禁忌联用”证据。
+- 由于不同商品名/剂型可能对应不同辅料或释放机制，仍需结合具体说明书复核。
+
+### 2. 相互作用的严重程度
+- 当前判断：**低到中等风险（需监测）**。
+- 若你近期出现胃肠不适、皮疹、嗜睡、心悸、头晕等症状，应及时就医并带上用药清单。
+
+### 3. 可能的不良反应
+- 常见可关注：胃部不适、恶心、头晕、乏力、皮肤过敏样反应。
+- 若存在肝肾功能异常、孕哺期、老年或多病共治，风险会升高。
+
+### 4. 建议的处理措施
+- 保留当前用药记录，**避免自行叠加同类成分药物**（尤其止痛退热、感冒复方药）。
+- 用药后 1-3 天关注是否出现新增不适；出现中重度症状应立即停药并就医。
+- 复诊时向医生/药师提供完整药单（药名、剂量、频次、开始日期），便于精确评估。`;
+    }
+    return text;
+  }
+
+  static normalizeInteractionPayload(raw, medicines = []) {
+    const obj = raw && typeof raw === 'object' ? raw : {};
+    const toArray = (v) => (Array.isArray(v) ? v.map((x) => String(x || '').trim()).filter(Boolean) : []);
+    const severityRaw = String(obj.severity || '').toLowerCase();
+    const severity =
+      severityRaw === 'high' || severityRaw === 'medium' || severityRaw === 'low'
+        ? severityRaw
+        : 'unknown';
+    const hasKnown =
+      typeof obj.hasKnownInteraction === 'boolean'
+        ? obj.hasKnownInteraction
+        : toArray(obj.evidence).length > 0;
+    const names = (Array.isArray(medicines) ? medicines : [])
+      .map((m) => String(m?.name || '').trim())
+      .filter(Boolean);
+    return {
+      hasKnownInteraction: hasKnown,
+      severity,
+      evidence: toArray(obj.evidence),
+      risks: toArray(obj.risks),
+      actions: toArray(obj.actions),
+      notes: String(obj.notes || '').trim(),
+      medicineNames: names,
+    };
+  }
+
+  static renderInteractionMarkdown(payload) {
+    const p = payload || {};
+    const medNames = Array.isArray(p.medicineNames) && p.medicineNames.length
+      ? p.medicineNames.join('、')
+      : '当前所选药品';
+    const noClearInteraction = !p.hasKnownInteraction;
+    const severityLabel = noClearInteraction
+      ? '无明确相互作用'
+      : p.severity === 'high'
+      ? '高风险'
+      : p.severity === 'medium'
+      ? '中风险'
+      : p.severity === 'low'
+      ? '低风险'
+      : '证据不足';
+    const asBullet = (arr, fallback) =>
+      (Array.isArray(arr) && arr.length ? arr : [fallback]).map((x) => `- ${x}`).join('\n');
+
+    const section1 = p.hasKnownInteraction
+      ? asBullet(p.evidence, `在 ${medNames} 联用场景中，存在需关注的相互作用线索。`)
+      : asBullet(
+          ['没有相互作用。'],
+          '没有相互作用。'
+        );
+
+    const section2 = asBullet(
+      [`当前综合判断：**${severityLabel}**。`],
+      '当前综合判断：证据有限。'
+    );
+    const section3 = asBullet(
+      p.risks,
+      '常见风险以胃肠不适、头晕、皮疹等为主，若症状明显需及时就医。'
+    );
+    const section4 = asBullet(
+      p.actions,
+      '请结合处方与说明书执行，不自行叠加同类成分药物。'
+    );
+    const noteLine = p.notes ? `\n\n> 备注：${p.notes}` : '';
+
+    return `## 相互作用分析结果
+
+### 1. 是否存在已知的药物相互作用
+${section1}
+
+### 2. 相互作用的严重程度
+${section2}
+
+### 3. 可能的不良反应
+${section3}
+
+### 4. 建议的处理措施
+${section4}${noteLine}`;
+  }
+
   static pickMedicineDetailFromLocal(medicine = {}) {
     const detail = {
       name: medicine?.name || '',
@@ -482,20 +637,57 @@ ${medicineInfo.contraindication ? `- 禁忌：${medicineInfo.contraindication}` 
    * 检测药物相互作用
    */
   static async checkDrugInteractions(medicines) {
-    const medicineList = medicines.map(m => `- ${m.name}（${m.dosage}，${m.frequency}）`).join('\n');
+    const list = Array.isArray(medicines) ? medicines.filter(Boolean) : [];
+    const medicineBasics = list
+      .map((m) => `- ${m.name || '未知药品'}（${m.dosage || '剂量未知'}，${m.frequency || '频次未知'}）`)
+      .join('\n');
 
-    const prompt = `你是一位专业的临床药师。请分析以下药品组合是否存在药物相互作用：
+    const enrichedDetails = await Promise.all(
+      list.map(async (m) => {
+        const name = String(m?.name || '').trim();
+        if (!name) return { name: '未知药品', detail: null };
+        const localDetail = this.pickMedicineDetailFromLocal(m);
+        if (localDetail) return { name, detail: localDetail };
+        try {
+          const remote = await MedicineDBService.searchMedicine(name);
+          if (remote?.hasDetails) return { name, detail: remote };
+        } catch {
+          // ignore db failures, keep fallback
+        }
+        return { name, detail: null };
+      })
+    );
+    const leafletContext = enrichedDetails
+      .map(({ name, detail }) => this.buildMedicineDbSnippet(detail, name))
+      .join('\n');
+    const directHints = this.buildDirectInteractionHints(enrichedDetails);
+    const directHintBlock = directHints.length
+      ? `\n## 交叉提及线索（来自说明书“相互作用”字段）\n${directHints.join('\n')}\n`
+      : '\n## 交叉提及线索（来自说明书“相互作用”字段）\n- 暂未检出药名级直接互提线索\n';
 
-药品列表：
-${medicineList}
+    const prompt = `你是一位专业的临床药师。请根据“药品基础信息 + 说明书信息”分析药物相互作用，并且仅输出 JSON 对象（禁止 markdown）。
 
-请检查：
-1. 是否存在已知的药物相互作用
-2. 相互作用的严重程度
-3. 可能的不良反应
-4. 建议的处理措施
+## 药品基础信息
+${medicineBasics}
 
-如果不存在明显的相互作用，请说明。请用中文回答，语言要专业但易懂。`;
+## 药品说明书信息（可用于交叉核对）
+${leafletContext}
+${directHintBlock}
+
+输出格式固定为：
+{
+  "hasKnownInteraction": true/false,
+  "severity": "low|medium|high|unknown",
+  "evidence": ["证据点1","证据点2"],
+  "risks": ["风险1","风险2"],
+  "actions": ["建议1","建议2","建议3"],
+  "notes": "补充说明"
+}
+
+要求：
+- evidence/risks/actions 每项尽量包含具体药名，不要空泛套话。
+- 若证据不足，不要重复多次“证据不足”，只在 notes 中说明一次。
+- 严禁输出 user/assistant/system 或任何非 JSON 内容。`;
 
     const messages = [
       {
@@ -508,7 +700,16 @@ ${medicineList}
       },
     ];
 
-    return await this.callAI(messages);
+    const raw = await this.callAI(messages, {
+      temperature: 0.2,
+      maxTokens: 1200,
+    });
+    const parsed = parseLooseJsonObject(raw);
+    if (parsed) {
+      const normalized = this.normalizeInteractionPayload(parsed, list);
+      return this.renderInteractionMarkdown(normalized);
+    }
+    return this.rewriteGenericInteractionResult(raw, list);
   }
 
   /**

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, Card, Chip, Dialog, Divider, Paragraph, Portal, Text } from 'react-native-paper';
+import Markdown from 'react-native-markdown-display';
 import { theme, appFontFamilies } from '../theme';
 import { AIService } from '../services/AIService';
 
@@ -89,7 +90,11 @@ export function DrugInteractionCheckCard({ medicines = [] }) {
       </Card>
 
       <Portal>
-        <Dialog visible={interactionVisible} onDismiss={() => setInteractionVisible(false)}>
+        <Dialog
+          visible={interactionVisible}
+          onDismiss={() => setInteractionVisible(false)}
+          style={styles.dialog}
+        >
           <Dialog.Title style={styles.dialogTitle}>相互作用分析结果</Dialog.Title>
           {interactionLoading ? (
             <Dialog.Content>
@@ -101,7 +106,11 @@ export function DrugInteractionCheckCard({ medicines = [] }) {
           ) : (
             <Dialog.ScrollArea>
               <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={styles.resultContent}>
-                <Text style={styles.resultText}>{interactionResult || '暂无结果'}</Text>
+                <View style={styles.resultBox}>
+                  <Markdown style={markdownStyles}>
+                    {interactionResult || '暂无结果'}
+                  </Markdown>
+                </View>
               </ScrollView>
             </Dialog.ScrollArea>
           )}
@@ -118,9 +127,9 @@ const styles = StyleSheet.create({
   card: {
     marginBottom: theme.spacing.md,
     borderRadius: theme.borderRadius.lg,
-    backgroundColor: theme.colors.surface,
+    backgroundColor: '#F6F9FE',
     borderWidth: 1,
-    borderColor: theme.colors.outlineVariant,
+    borderColor: '#BFD2EA',
   },
   title: {
     fontFamily: appFontFamilies.bold,
@@ -131,6 +140,7 @@ const styles = StyleSheet.create({
     fontFamily: appFontFamilies.regular,
     color: theme.colors.textSecondary,
     marginTop: theme.spacing.xs,
+    lineHeight: 20,
   },
   divider: {
     marginVertical: theme.spacing.md,
@@ -141,16 +151,25 @@ const styles = StyleSheet.create({
     gap: theme.spacing.sm,
   },
   chip: {
-    backgroundColor: theme.colors.surfaceVariant,
+    backgroundColor: '#EEF3FA',
   },
   chipLabel: {
     fontFamily: appFontFamilies.regular,
   },
   actionButton: {
     marginTop: theme.spacing.md,
+    borderRadius: theme.borderRadius.md,
+  },
+  dialog: {
+    maxWidth: 980,
+    width: '92%',
+    alignSelf: 'center',
+    borderRadius: theme.borderRadius.lg,
+    backgroundColor: theme.colors.surface,
   },
   dialogTitle: {
     fontFamily: appFontFamilies.bold,
+    fontSize: 28,
   },
   dialogLoading: {
     alignItems: 'center',
@@ -164,10 +183,44 @@ const styles = StyleSheet.create({
   resultContent: {
     paddingVertical: theme.spacing.sm,
   },
+  resultBox: {
+    borderWidth: 1,
+    borderColor: '#DCE6F2',
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: '#F6F9FE',
+    padding: theme.spacing.md,
+  },
   resultText: {
     fontFamily: appFontFamilies.regular,
     color: theme.colors.text,
     lineHeight: 22,
   },
 });
+
+const markdownStyles = {
+  body: {
+    fontFamily: appFontFamilies.regular,
+    color: theme.colors.text,
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  heading3: {
+    fontFamily: appFontFamilies.bold,
+    color: theme.colors.primary,
+    fontSize: 15,
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  bullet_list: {
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  list_item: {
+    marginBottom: 4,
+  },
+  paragraph: {
+    marginTop: 4,
+    marginBottom: 8,
+  },
+};
 
