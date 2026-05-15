@@ -132,6 +132,7 @@ const buildCareRows = async () => {
   const out = [];
   for (const acc of list) {
     try {
+      const accountLabel = acc?.remark || acc?.name || acc?.email || '关怀账号';
       const ds = await CareAccountService.fetchCareRecipientDataset(acc);
       if (!ds?.snapshotData) continue;
       const meds = Array.isArray(ds.snapshotData['@medicines']) ? ds.snapshotData['@medicines'] : [];
@@ -146,19 +147,32 @@ const buildCareRows = async () => {
           out.push({
             id: `${acc.userId}_${log.id || log.at}_${action}`,
             at: log.at || log.scheduledAt || new Date().toISOString(),
-            text: `${acc.name || acc.email}：${name}${action === 'taken' ? ' 已服用' : ' 漏服'}`,
+            text: `${name}${action === 'taken' ? ' 已服用' : ' 漏服'}`,
             type: 'medication',
+            accountLabel,
           });
         });
       const alerts = await CareAccountService.fetchDerivedAlertsForAccount(acc);
-      (alerts || []).slice(0, 8).forEach((al) => {
+      (alerts || [])
+        .filter((al) => {
+          const t = String(al?.type || '');
+          return (
+            t === 'heart_rate_high' ||
+            t === 'heart_rate_low' ||
+            t === 'blood_glucose_high' ||
+            t === 'blood_glucose_low'
+          );
+        })
+        .slice(0, 8)
+        .forEach((al) => {
         out.push({
           id: `${acc.userId}_alert_${al.id}`,
           at: al.at || new Date().toISOString(),
-          text: al.message || `${acc.name || acc.email} 异常动态`,
+          text: al.message || `${accountLabel} 异常动态`,
           type: 'abnormal',
+          accountLabel,
         });
-      });
+        });
     } catch {
       // ignore 单个关怀账号失败
     }
@@ -609,6 +623,7 @@ export default function HomeScreen({ navigation }) {
                 ) : (
                   (careRecordTab === 'medication' ? careMedicationRows : careAbnormalRows).map((row) => (
                     <View key={row.id} style={styles.recordRow}>
+                      <Text style={styles.recordSource}>账号：{row.accountLabel || '关怀账号'}</Text>
                       <Text style={styles.recordText}>{row.text}</Text>
                       <Text style={styles.recordTime}>{formatSyncTime(row.at)}</Text>
                     </View>
@@ -1044,6 +1059,12 @@ const styles = StyleSheet.create({
     ...textStyles.body,
     fontSize: 13,
     color: theme.colors.text,
+  },
+  recordSource: {
+    ...textStyles.semi,
+    fontSize: 12,
+    color: theme.colors.primary,
+    marginBottom: 2,
   },
   recordExtra: {
     ...textStyles.body,

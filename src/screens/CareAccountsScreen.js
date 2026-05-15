@@ -8,7 +8,7 @@ import {
   TouchableOpacity,
   Pressable,
 } from 'react-native';
-import { Text, Title, Paragraph, Button, Menu } from 'react-native-paper';
+import { Text, Title, Paragraph, Button, Menu, Portal, Dialog, TextInput } from 'react-native-paper';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme, textStyles } from '../theme';
@@ -85,6 +85,13 @@ export default function CareAccountsScreen() {
   const [expandedViewByUser, setExpandedViewByUser] = useState({});
   const [loadingExpand, setLoadingExpand] = useState(null);
   const [careAddOpen, setCareAddOpen] = useState(false);
+  const [remarkDialogVisible, setRemarkDialogVisible] = useState(false);
+  const [remarkTarget, setRemarkTarget] = useState(null);
+  const [remarkInput, setRemarkInput] = useState('');
+
+  const getDisplayName = useCallback((acc) => {
+    return acc?.remark || acc?.name || acc?.email || '关怀账号';
+  }, []);
 
   const loadAccounts = useCallback(async () => {
     // 先拉取一次云端，确保“谁关怀了我”与下发记录是最新快照
@@ -162,7 +169,8 @@ export default function CareAccountsScreen() {
   };
 
   const removeCare = (acc) => {
-    const detail = `确定要移除关怀账号「${acc.name}」吗？移除后将无法继续查看对方的关怀动态与报告，需重新添加账号才能恢复。`;
+    const displayName = getDisplayName(acc);
+    const detail = `确定要移除关怀账号「${displayName}」吗？移除后将无法继续查看对方的关怀动态与报告，需重新添加账号才能恢复。`;
     const doRemove = async () => {
       await CareAccountService.removeCareAccount(acc.userId);
       setAlertByUser((prev) => {
@@ -203,9 +211,24 @@ export default function CareAccountsScreen() {
   const openCareReport = (acc, period) => {
     navigation.navigate('报告', {
       careUserId: acc.userId,
-      careDisplayName: acc.name || acc.email,
+      careDisplayName: getDisplayName(acc),
       reportTypeForCare: period,
     });
+  };
+
+  const openRemarkDialog = (acc) => {
+    setRemarkTarget(acc);
+    setRemarkInput(String(acc?.remark || ''));
+    setRemarkDialogVisible(true);
+  };
+
+  const saveRemark = async () => {
+    if (!remarkTarget?.userId) return;
+    await CareAccountService.setCareAccountRemark(remarkTarget.userId, remarkInput);
+    setRemarkDialogVisible(false);
+    setRemarkTarget(null);
+    setRemarkInput('');
+    await loadAccounts();
   };
 
   return (
@@ -249,7 +272,10 @@ export default function CareAccountsScreen() {
                   >
                     <Ionicons name="heart" size={22} color={theme.colors.error} style={styles.heartIcon} />
                     <View style={styles.rowText}>
-                      <Text style={[textStyles.semi, styles.name]}>{acc.name}</Text>
+                      <Text style={[textStyles.semi, styles.name]}>{getDisplayName(acc)}</Text>
+                      {acc?.remark ? (
+                        <Text style={styles.email}>原账号：{acc.name || acc.email}</Text>
+                      ) : null}
                       <Text style={styles.email}>{acc.email}</Text>
                     </View>
                     <Ionicons
@@ -260,6 +286,9 @@ export default function CareAccountsScreen() {
                   </TouchableOpacity>
                   <View style={styles.rowRight}>
                     <ReportDropdown onPick={(period) => openCareReport(acc, period)} />
+                    <Button compact onPress={() => openRemarkDialog(acc)}>
+                      备注
+                    </Button>
                     <Button compact textColor={theme.colors.error} onPress={() => removeCare(acc)}>
                       移除
                     </Button>
@@ -360,6 +389,24 @@ export default function CareAccountsScreen() {
         onDismiss={() => setCareAddOpen(false)}
         onAdded={loadAccounts}
       />
+      <Portal>
+        <Dialog visible={remarkDialogVisible} onDismiss={() => setRemarkDialogVisible(false)}>
+          <Dialog.Title>设置备注</Dialog.Title>
+          <Dialog.Content>
+            <TextInput
+              mode="outlined"
+              label="备注名称（最多32字）"
+              value={remarkInput}
+              onChangeText={setRemarkInput}
+              maxLength={32}
+            />
+          </Dialog.Content>
+          <Dialog.Actions>
+            <Button onPress={() => setRemarkDialogVisible(false)}>取消</Button>
+            <Button mode="contained" onPress={() => saveRemark().catch(() => {})}>保存</Button>
+          </Dialog.Actions>
+        </Dialog>
+      </Portal>
     </View>
   );
 }

@@ -47,7 +47,7 @@
       ]
     ],
     "extra": {
-      "CLOUD_API_BASE_URL": "http://10.206.140.107:4000",
+      "CLOUD_API_BASE_URL": "http://192.168.3.5:4000",
       "TONGUE_API_BASE_URL": "http://127.0.0.1:5000",
       "SILICONFLOW_API_KEY": "sk-mhlnnwihlysymqhqbnnqcrbnqhmmmtofvejqfndfoivbqnjj"
     }

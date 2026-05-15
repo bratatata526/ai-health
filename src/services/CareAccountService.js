@@ -7,7 +7,7 @@ const STORAGE_KEY = '@care_linked_accounts';
 const STORAGE_VERSION_CURRENT = 2;
 const STORAGE_VERSION_LEGACY = 1;
 
-/** @typedef {{ userId: string, email: string, name: string, token: string, addedAt: string }} CareLinkedAccount */
+/** @typedef {{ userId: string, email: string, name: string, token: string, addedAt: string, remark?: string }} CareLinkedAccount */
 
 let latestAlerts = [];
 let pollTimer = null;
@@ -42,6 +42,12 @@ function unwrapJsonString(value) {
   } catch {
     return value;
   }
+}
+
+function sanitizeRemark(remark) {
+  const text = String(remark || '').trim();
+  if (!text) return '';
+  return text.slice(0, 32);
 }
 
 function pickHealthDataBlob(snapshotDataLayer) {
@@ -137,7 +143,7 @@ function deriveAlertsFromData(account /** CareLinkedAccount */, data /** object 
   const medMap = new Map(meds.map((m) => [m?.id, m?.name]));
 
   const alerts = [];
-  const label = account.name || account.email;
+  const label = account.remark || account.name || account.email;
   const now = Date.now();
   const missCutoff = now - 72 * 3600000;
 
@@ -399,14 +405,14 @@ export class CareAccountService {
         ownerUserId: ownerKey,
         accounts: payload.accounts,
       });
-      return payload.accounts;
+      return payload.accounts.map((a) => ({ ...a, remark: sanitizeRemark(a?.remark) || '' }));
     }
 
     if (payload.ownerUserId !== ownerKey) {
       return [];
     }
 
-    return payload.accounts;
+    return payload.accounts.map((a) => ({ ...a, remark: sanitizeRemark(a?.remark) || '' }));
   }
 
   /**
@@ -447,6 +453,23 @@ export class CareAccountService {
     await this.refreshCareAlerts();
   }
 
+  static async setCareAccountRemark(userId, remark) {
+    if (!userId) throw new Error('关怀账号无效');
+    const text = sanitizeRemark(remark);
+    const list = await this.listCareAccounts();
+    if (!list.length) throw new Error('暂无关怀账号');
+    let hit = false;
+    const next = list.map((a) => {
+      if (a.userId !== userId) return a;
+      hit = true;
+      return { ...a, remark: text };
+    });
+    if (!hit) throw new Error('未找到该关怀账号');
+    await this.saveCareAccounts(next);
+    await this.refreshCareAlerts();
+    return true;
+  }
+
   /**
    * 使用对方账号邮箱+密码登录云端，仅保存 Token（不长期保存密码）。
    * @returns {CareLinkedAccount}
@@ -479,7 +502,9 @@ export class CareAccountService {
 
     const existing = await this.listCareAccounts();
     if (existing.some((a) => a.userId === entry.userId)) {
-      const merged = existing.map((a) => (a.userId === entry.userId ? entry : a));
+      const merged = existing.map((a) =>
+        a.userId === entry.userId ? { ...entry, remark: sanitizeRemark(a?.remark) || '' } : a
+      );
       await this.saveCareAccounts(merged);
     } else {
       await this.saveCareAccounts([...existing, entry]);
