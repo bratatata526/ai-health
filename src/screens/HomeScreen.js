@@ -97,6 +97,53 @@ const nearestByNow = (rows, nowMs) => {
   }, rows[0]);
 };
 
+const hhmmToMinutes = (hhmm) => {
+  const norm = parseHHMM(hhmm);
+  if (!norm) return null;
+  const [h, m] = norm.split(':').map((x) => Number(x));
+  return h * 60 + m;
+};
+
+const nearestUpcomingByNow = (rows, nowMs) => {
+  const list = (rows || [])
+    .map((r) => ({ row: r, ts: new Date(r?.scheduledAt).getTime() }))
+    .filter((x) => Number.isFinite(x.ts) && x.ts >= nowMs)
+    .sort((a, b) => a.ts - b.ts);
+  return list.length ? list[0].row : null;
+};
+
+const nearestPastByNow = (rows, nowMs) => {
+  const list = (rows || [])
+    .map((r) => ({ row: r, ts: new Date(r?.scheduledAt).getTime() }))
+    .filter((x) => Number.isFinite(x.ts) && x.ts < nowMs)
+    .sort((a, b) => b.ts - a.ts);
+  return list.length ? list[0].row : null;
+};
+
+const getFixedReminderMeta = (medicine, todayRows, nowSeed) => {
+  const cfg = medicine?.reminderConfig || {};
+  const times = [...new Set((Array.isArray(cfg.times) ? cfg.times : []).map(parseHHMM).filter(Boolean))]
+    .sort((a, b) => hhmmToMinutes(a) - hhmmToMinutes(b));
+  if (!times.length) return { displayText: '今日暂无提醒', canTake: false };
+  const rows = Array.isArray(todayRows) ? todayRows : [];
+  const now = new Date(nowSeed);
+  const nowMs = now.getTime();
+  const upcomingUntaken = nearestUpcomingByNow(
+    rows.filter((r) => r.status !== 'taken'),
+    nowMs
+  );
+  if (upcomingUntaken) {
+    return {
+      displayText: `最近定点：${formatTime(upcomingUntaken.scheduledAt)}`,
+      canTake: true,
+    };
+  }
+  return {
+    displayText: `最近定点：明天 ${times[0]}`,
+    canTake: false,
+  };
+};
+
 const buildMyAbnormalRows = (healthData) => {
   const now = Date.now();
   const cutoff = now - 48 * 3600 * 1000;
@@ -293,6 +340,7 @@ export default function HomeScreen({ navigation }) {
         const nearest = nearestByNow(untaken.length ? untaken : todayRows, now);
         const total = todayRows.length || Math.max(0, Number(m?.reminderConfig?.timesPerDay || 0));
         const remain = untaken.length;
+        const fixedMeta = mode === 'fixed_times' ? getFixedReminderMeta(m, todayRows, reminderTick) : null;
         return {
           medicine: m,
           mode,
@@ -303,10 +351,14 @@ export default function HomeScreen({ navigation }) {
               ? getIntervalNextText(m, reminderTick)
               : mode === 'times_per_day'
                 ? `今日还需服用 ${remain} 次（共 ${total} 次）`
-                : nearest
-                  ? `最近定点：${formatTime(nearest.scheduledAt)}`
-                  : '今日暂无提醒',
-          actionLabel: mode === 'times_per_day' ? '服用1次' : mode === 'interval_hours' ? '服用' : '已服用',
+                : (fixedMeta?.displayText || '今日暂无提醒'),
+          canTake: mode === 'fixed_times' ? !!fixedMeta?.canTake : true,
+          actionLabel:
+            mode === 'times_per_day'
+              ? '服用1次'
+              : mode === 'fixed_times'
+                ? (fixedMeta?.canTake ? '服用' : '已服用')
+                : '服用',
         };
       });
   }, [medicines, todayRemindersByMedicine, reminderTick]);
@@ -314,6 +366,7 @@ export default function HomeScreen({ navigation }) {
   const handleTakeAction = async (item) => {
     const m = item?.medicine;
     if (!m?.id) return;
+    if (item?.canTake === false) return;
     const mode = item.mode;
     const rows = Array.isArray(item.todayRows) ? item.todayRows : [];
     const nowMs = Date.now();
@@ -323,7 +376,7 @@ export default function HomeScreen({ navigation }) {
         ? (pending[0] || null)
         : mode === 'interval_hours'
           ? null
-          : nearestByNow(pending.length ? pending : rows, nowMs);
+          : nearestUpcomingByNow(pending, nowMs);
 
     const buildContextNote = () => {
       if (mode === 'times_per_day') {
@@ -536,6 +589,7 @@ export default function HomeScreen({ navigation }) {
                           mode="contained"
                           compact
                           style={styles.takeBtn}
+                          disabled={item.canTake === false}
                           onPress={() => handleTakeAction(item)}
                         >
                           {item.actionLabel}
