@@ -390,8 +390,12 @@ export default function CareAccountsScreen() {
         onAdded={loadAccounts}
       />
       <Portal>
-        <Dialog visible={remarkDialogVisible} onDismiss={() => setRemarkDialogVisible(false)}>
-          <Dialog.Title>设置备注</Dialog.Title>
+        <Dialog
+          visible={remarkDialogVisible}
+          onDismiss={() => setRemarkDialogVisible(false)}
+          style={styles.remarkDialog}
+        >
+          <Dialog.Title style={styles.remarkDialogTitle}>设置备注</Dialog.Title>
           <Dialog.Content>
             <TextInput
               mode="outlined"
@@ -399,11 +403,17 @@ export default function CareAccountsScreen() {
               value={remarkInput}
               onChangeText={setRemarkInput}
               maxLength={32}
+              style={styles.remarkInput}
+              contentStyle={styles.remarkInputContent}
             />
           </Dialog.Content>
-          <Dialog.Actions>
-            <Button onPress={() => setRemarkDialogVisible(false)}>取消</Button>
-            <Button mode="contained" onPress={() => saveRemark().catch(() => {})}>保存</Button>
+          <Dialog.Actions style={styles.remarkDialogActions}>
+            <Button textColor={theme.colors.textSecondary} onPress={() => setRemarkDialogVisible(false)}>
+              取消
+            </Button>
+            <Button mode="contained" onPress={() => saveRemark().catch(() => {})}>
+              保存
+            </Button>
           </Dialog.Actions>
         </Dialog>
       </Portal>
@@ -584,5 +594,30 @@ const styles = StyleSheet.create({
   dropdownItemWebText: {
     fontSize: 14,
     color: theme.colors.text,
+  },
+  remarkDialog: {
+    width: '94%',
+    maxWidth: 1100,
+    alignSelf: 'center',
+    borderRadius: 28,
+    backgroundColor: '#FFFFFF',
+  },
+  remarkDialogTitle: {
+    ...textStyles.title,
+    fontSize: 30,
+    color: theme.colors.text,
+  },
+  remarkInput: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    marginTop: theme.spacing.xs,
+  },
+  remarkInputContent: {
+    paddingVertical: 14,
+  },
+  remarkDialogActions: {
+    justifyContent: 'flex-end',
+    gap: theme.spacing.sm,
+    paddingBottom: theme.spacing.md,
   },
 });

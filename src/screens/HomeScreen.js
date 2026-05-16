@@ -255,7 +255,7 @@ export default function HomeScreen({ navigation }) {
     { key: 'dev', icon: 'watch', color: theme.colors.secondary, title: '设备', nav: '设备' },
     { key: 'rpt', icon: 'document-text', color: theme.colors.accent, title: '报告', nav: '报告' },
     { key: 'tong', icon: 'leaf', color: '#16A34A', title: '舌诊', nav: '舌诊' },
-    { key: 'care', icon: 'people', color: '#EF4444', title: '关怀', nav: '关怀' },
+    ...(Platform.OS === 'android' ? [] : [{ key: 'care', icon: 'people', color: '#EF4444', title: '关怀', nav: '关怀' }]),
   ];
 
   const medicineMap = useMemo(() => new Map(medicines.map((m) => [m.id, m])), [medicines]);
@@ -437,6 +437,19 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.accountName}>{accountName}</Text>
             <Text style={styles.accountMeta}>{accountEmail}</Text>
             <Text style={styles.accountMeta}>最近云同步：{accountSync}</Text>
+            {Platform.OS === 'android' ? (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={styles.careEntryBtn}
+                onPress={() => navigation.navigate('关怀')}
+              >
+                <View style={styles.careEntryIconWrap}>
+                  <Ionicons name="heart" size={16} color={theme.colors.primary} />
+                </View>
+                <Text style={styles.careEntryText}>关怀账号</Text>
+                <Ionicons name="chevron-forward" size={16} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            ) : null}
             <View style={styles.metricRow}>
               <View style={styles.metricChip}>
                 <Text style={styles.metricLabel}>身高</Text>
@@ -912,6 +925,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.textSecondary,
     marginTop: 2,
+  },
+  careEntryBtn: {
+    marginTop: theme.spacing.sm,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.outlineVariant,
+    backgroundColor: theme.colors.surfaceVariant,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  careEntryIconWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(74, 144, 226, 0.12)',
+  },
+  careEntryText: {
+    ...textStyles.semi,
+    flex: 1,
+    fontSize: 13,
+    color: theme.colors.text,
   },
   metricRow: {
     flexDirection: 'row',

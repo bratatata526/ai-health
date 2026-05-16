@@ -56,6 +56,51 @@ function stripHtmlTags(text) {
     .trim();
 }
 
+const DETAIL_TEXT_KEYS = [
+  'name',
+  'specification',
+  'manufacturer',
+  'approvalNumber',
+  'indication',
+  'contraindication',
+  'usage',
+  'dosage',
+  'sideEffects',
+  'precautions',
+  'interactions',
+  'storage',
+  'description',
+];
+
+function sanitizeLeafletText(text, { keepNewlines = false } = {}) {
+  if (text == null) return '';
+  let s = String(text);
+  if (!s) return '';
+
+  // 去掉常见乱码占位符（Unicode replacement char / mojibake 残片）
+  s = s.replace(/\uFFFD+/g, '').replace(/ï¿½+/g, '');
+  // 去掉不可见控制字符（保留换行/制表符）
+  s = s.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '');
+  // 连续异常符号收敛，避免说明书里出现块状乱码
+  s = s.replace(/[□■▢▣]{2,}/g, '');
+  // 统一空白
+  s = s.replace(/\r\n?/g, '\n');
+  if (!keepNewlines) {
+    s = s.replace(/\n+/g, ' ');
+  }
+  s = s.replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n');
+  return s.trim();
+}
+
+function sanitizeMedicineDetail(detail) {
+  const src = detail && typeof detail === 'object' ? detail : {};
+  const out = { ...src };
+  DETAIL_TEXT_KEYS.forEach((key) => {
+    out[key] = sanitizeLeafletText(src[key], { keepNewlines: key === 'description' });
+  });
+  return out;
+}
+
 function extractByLabels(text, labels = []) {
   const src = String(text || '');
   for (const label of labels) {
@@ -230,7 +275,7 @@ export class MedicineDBService {
       const cached = await SecureStorage.getItem(best.key);
       if (cached && cached.data && cached.data.hasDetails) {
         console.log('离线兜底命中缓存:', best.key, 'score=', best.score);
-        return cached.data;
+        return sanitizeMedicineDetail(cached.data);
       }
       return null;
     } catch {
@@ -331,7 +376,7 @@ export class MedicineDBService {
         const cached = await SecureStorage.getItem(cacheKey);
         if (cached && cached.data && cached.cachedAt && Date.now() - cached.cachedAt < MEDICINE_DB_CACHE_TTL_MS) {
           console.log('命中药品说明缓存:', medicineName);
-          return cached.data;
+          return sanitizeMedicineDetail(cached.data);
         }
       } catch {
         // 缓存读取失败不影响主流程
@@ -353,7 +398,7 @@ export class MedicineDBService {
 
       // 聚合数据API返回格式：{ error_code: 0, reason: 'success', result: {...} }
       if (data.error_code === 0 && data.result) {
-        const formatted = this.formatJuheResult(data.result);
+        const formatted = sanitizeMedicineDetail(this.formatJuheResult(data.result));
         console.log('格式化后的药品信息:', formatted);
         try {
           await SecureStorage.setItem(cacheKey, { cachedAt: Date.now(), data: formatted });
@@ -407,7 +452,7 @@ export class MedicineDBService {
         (Array.isArray(data?.result?.list) && data.result.list) ||
         [];
       if (data.code === 200 && list.length > 0) {
-        return this.formatTianAPIResult(list[0]);
+        return sanitizeMedicineDetail(this.formatTianAPIResult(list[0]));
       }
 
       // 如果返回错误，记录日志
@@ -446,7 +491,7 @@ export class MedicineDBService {
       const data = await response.json();
 
       if (data.showapi_res_code === 0 && data.showapi_res_body) {
-        return this.formatWanweiResult(data.showapi_res_body);
+        return sanitizeMedicineDetail(this.formatWanweiResult(data.showapi_res_body));
       }
 
       return this.getEmptyResult();
@@ -472,7 +517,7 @@ export class MedicineDBService {
       const data = await response.json();
 
       if (data.status === '0' && data.result) {
-        return this.formatJisuResult(data.result);
+        return sanitizeMedicineDetail(this.formatJisuResult(data.result));
       }
 
       return this.getEmptyResult();
@@ -611,7 +656,8 @@ export class MedicineDBService {
    * @returns {Object} 合并后的药品信息
    */
   static mergeResults(ocrResult, dbResult, selectedCandidate = null) {
-    const picked = selectedCandidate && selectedCandidate.hasDetails ? selectedCandidate : dbResult;
+    const pickedRaw = selectedCandidate && selectedCandidate.hasDetails ? selectedCandidate : dbResult;
+    const picked = sanitizeMedicineDetail(pickedRaw);
     return {
       // OCR识别的信息（优先级高）
       name: ocrResult.name || picked.name,

@@ -9,6 +9,7 @@ import {
   TextInput,
   ActivityIndicator,
 } from 'react-native-paper';
+import Markdown from 'react-native-markdown-display';
 import AIIcon from '../components/AIIcon';
 import { theme, appFontFamilies } from '../theme';
 import { AIService } from '../services/AIService';
@@ -93,6 +94,16 @@ export default function AIScreen() {
     }
   };
 
+  const handleChatInputKeyPress = (e) => {
+    if (Platform.OS !== 'web') return;
+    const key = e?.nativeEvent?.key;
+    const shiftKey = Boolean(e?.nativeEvent?.shiftKey);
+    if (key === 'Enter' && !shiftKey) {
+      e?.preventDefault?.();
+      sendChat();
+    }
+  };
+
   return (
     <ScrollView
       style={styles.container}
@@ -131,7 +142,11 @@ export default function AIScreen() {
                   m.role === 'user' ? styles.chatBubbleUser : styles.chatBubbleAssistant,
                 ]}
               >
-                <Text style={styles.chatText}>{m.content}</Text>
+                {m.role === 'assistant' ? (
+                  <Markdown style={markdownStyles}>{m.content}</Markdown>
+                ) : (
+                  <Text style={styles.chatText}>{m.content}</Text>
+                )}
               </View>
             ))}
             {chatLoading && (
@@ -148,13 +163,16 @@ export default function AIScreen() {
               placeholder="输入你的问题…"
               value={chatInput}
               onChangeText={setChatInput}
+              onKeyPress={handleChatInputKeyPress}
               style={styles.chatInput}
               multiline
+              blurOnSubmit={false}
             />
             <Button mode="contained" onPress={sendChat} loading={chatLoading} disabled={chatLoading}>
               发送
             </Button>
           </View>
+          <Paragraph style={styles.chatInputHint}>回车发送，Shift + 回车换行</Paragraph>
         </Card.Content>
       </Card>
     </ScrollView>
@@ -255,9 +273,50 @@ const styles = StyleSheet.create({
     fontFamily: appFontFamilies.regular,
     color: theme.colors.textSecondary,
   },
+  chatInputHint: {
+    marginTop: theme.spacing.xs,
+    color: theme.colors.textSecondary,
+    fontSize: 12,
+  },
   dialogLoading: {
     alignItems: 'center',
     paddingVertical: theme.spacing.lg,
   },
 });
+
+const markdownStyles = {
+  body: {
+    fontFamily: appFontFamilies.regular,
+    color: theme.colors.text,
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  paragraph: {
+    marginTop: 2,
+    marginBottom: 6,
+  },
+  bullet_list: {
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  list_item: {
+    marginBottom: 4,
+  },
+  heading3: {
+    fontFamily: appFontFamilies.bold,
+    color: theme.colors.primary,
+    fontSize: 15,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  heading4: {
+    fontFamily: appFontFamilies.bold,
+    color: theme.colors.primary,
+    fontSize: 14,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+};
 

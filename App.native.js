@@ -202,6 +202,7 @@ export default function App() {
         ) : (
           <View style={{ flex: 1, position: 'relative', overflow: 'visible' }}>
           <Tab.Navigator
+            initialRouteName="首页"
             screenOptions={({ route }) => ({
               tabBarIcon: ({ focused, color, size }) => {
                 // AI 助手使用自定义 SVG 图标
@@ -274,6 +275,7 @@ export default function App() {
               name="关怀"
               options={{
                 headerTitle: '关怀账号',
+                tabBarButton: Platform.OS === 'android' ? () => null : undefined,
               }}
             >
               {(props) => (

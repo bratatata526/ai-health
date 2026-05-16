@@ -30,6 +30,38 @@ const DEFAULT_MEAL_TAG = 'none'; // none | before_meal | after_meal | bedtime
 // - interval_hours: 使用 cfg.intervalHours + cfg.intervalStartTime
 // - prn: 按需，不生成提醒
 const DEFAULT_REMINDER_MODE = 'fixed_times';
+const LEAFLET_FIELD_KEYS = [
+  'indication',
+  'contraindication',
+  'usage',
+  'sideEffects',
+  'precautions',
+  'interactions',
+  'storage',
+  'description',
+];
+
+function sanitizeLeafletFieldText(text) {
+  if (text == null) return '';
+  return String(text)
+    .replace(/\uFFFD+/g, '')
+    .replace(/ï¿½+/g, '')
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function sanitizeMedicineLeafletFields(medicine) {
+  if (!medicine || typeof medicine !== 'object') return medicine;
+  const next = { ...medicine };
+  LEAFLET_FIELD_KEYS.forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(next, key)) {
+      next[key] = sanitizeLeafletFieldText(next[key]);
+    }
+  });
+  return next;
+}
 
 function clampInt(n, min, max) {
   const x = Number(n);
@@ -259,7 +291,8 @@ export class MedicineService {
   static async getAllMedicines() {
     try {
       const data = await SecureStorage.getItem(MEDICINES_KEY);
-      return data || [];
+      if (!Array.isArray(data)) return [];
+      return data.map((item) => sanitizeMedicineLeafletFields(item));
     } catch (error) {
       console.error('获取药品列表失败:', error);
       return [];
